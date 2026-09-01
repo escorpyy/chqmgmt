@@ -1,0 +1,409 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+enum ChequeStatus {
+  PENDING     // received, not yet followed up
+  FOLLOWUP    // in the call/negotiation cycle
+  ON_CHECK    // true status unknown — wasn't updated in time, needs manual re-verification
+  PRESENTED   // submitted to bank
+  CLEARED     // fully recovered (via bank presentment OR partial payments)
+  RETURNED    // bounced/dishonored
+}
+
+enum ClearanceMethod {
+  PRESENTMENT       // cleared normally through the bank
+  PARTIAL_RECOVERY  // cleared by accumulating partial payments after default
+}
+
+enum FollowUpResponse {
+  CONFIRMED                 // "go ahead, present it"
+  REQUESTED_DELAY           // "please hold, not yet"
+  REQUESTED_REPLACEMENT     // "I'll issue a new cheque"
+  REQUESTED_PARTIAL_PAYMENT // "I'll pay part of it now, in cash/IPS/etc."
+  REQUESTED_RETURN          // "already paid, return my cheque"
+  UNREACHABLE               // no answer / could not reach
+  OTHER
+}
+
+enum ReturnReason {
+  INSUFFICIENT_FUNDS
+  SIGNATURE_MISMATCH
+  ACCOUNT_CLOSED
+  STOPPED_BY_ISSUER
+  DATE_ISSUE           // stale/post-dated/expired
+  OTHER
+}
+
+enum PaymentMethod {
+  CASH
+  IPS
+  CIPS
+  QR
+  BANK_DEPOSIT
+  OTHER
+}
+
+enum IssuedChequeStatus {
+  ISSUED      // handed to payee, not yet presented
+  FOLLOWUP    // in the follow-up/negotiation cycle after a bounce
+  ON_CHECK    // true status unknown — wasn't updated in time, needs manual re-verification
+  PRESENTED   // submitted by the payee to their bank
+  CLEARED     // fully settled (via presentment OR partial payments)
+  RETURNED    // bounced/dishonored
+  STOPPED     // payment stopped/cancelled by us before clearing
+}
+
+enum IssuedFollowUpResponse {
+  WILL_REPRESENT            // payee agrees to redeposit the same cheque
+  REQUESTED_REPLACEMENT     // we'll issue a new cheque instead
+  REQUESTED_PARTIAL_PAYMENT // we'll settle partially via cash/transfer
+  DISPUTE                   // payee disputes the amount/cheque
+  UNREACHABLE
+  OTHER
+}
+
+enum PartyType {
+  FIRM
+  INDIVIDUAL
+}
+
+enum ChequeType {
+  ACCOUNT_PAYEE   // payee is a firm — crossed cheque, must clear through the payee's bank account
+  BEARER          // payee is an individual — can be cashed directly
+}
+
+model Receipt {
+  id         String   @id @default(cuid())
+  fiscalYear String   // FY, e.g. "2083/84"
+  receiptNo  String?  // Rpt No, e.g. "UR-001" — stays the same across cheque replacements; not unique, ChqNo is the real unique key
+  cheques    Cheque[]
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model Party {
+  id        String     @id @default(cuid())
+  type      PartyType
+  name      String
+  phone     String?
+  address   String?
+  panNo     String?    @unique
+
+  // For an INDIVIDUAL party: the firm they're affiliated with/represent
+  firmId    String?
+  firm      Party?     @relation("PartyFirm", fields: [firmId], references: [id], onDelete: Restrict)
+  members   Party[]    @relation("PartyFirm") // if type = FIRM: individuals affiliated with this firm
+
+  cheques     Cheque[]
+  paidCheques IssuedCheque[] @relation("PayeeParty")
+
+  deletedAt DateTime?  // soft delete — never hard-delete a party with financial history
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([name])
+  @@index([firmId])
+  @@index([deletedAt])
+}
+
+model Bank {
+  id               String   @id @default(cuid())
+  name             String   @unique // NOTE: case-sensitive at the Prisma/Postgres level — see manual-migration-additions.sql for a case-insensitive unique index
+  branch           String?
+  draweeCheques    Cheque[] @relation("DraweeBank")
+  presentedCheques Cheque[] @relation("PresentedBank")
+  companyAccounts  CompanyBankAccount[]
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model Staff {
+  id        String           @id @default(cuid())
+  name      String
+  phone     String?
+  cheques   Cheque[]         @relation("HandledBy")
+  followUps ChequeFollowUp[] @relation("FollowedUpBy")
+  payments  ChequePayment[]  @relation("PaymentRecordedBy")
+
+  issuedCheques   IssuedCheque[]         @relation("IssuedBy")
+  issuedFollowUps IssuedChequeFollowUp[] @relation("IssuedFollowedUpBy")
+  issuedPayments  IssuedChequePayment[]  @relation("IssuedPaymentRecordedBy")
+
+  checkLogs       ChequeCheckLog[]       @relation("RaisedBy")
+  issuedCheckLogs IssuedChequeCheckLog[] @relation("IssuedRaisedBy")
+
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+}
+
+model CompanyBankAccount {
+  id            String   @id @default(cuid())
+  bankId        String
+  bank          Bank     @relation(fields: [bankId], references: [id], onDelete: Restrict)
+  accountName   String   // legal name on the account, e.g. "B Enterprises Pvt. Ltd."
+  accountNumber String   @unique
+  branch        String?
+  issuedCheques IssuedCheque[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([bankId])
+}
+
+model Cheque {
+  id          String            @id @default(cuid())
+
+  receiptId   String            // shared across the original cheque and any replacements
+  receipt     Receipt           @relation(fields: [receiptId], references: [id], onDelete: Restrict)
+
+  refNo       String?           // Ref No, e.g. "URT-001/01" — manually transcribed from a physical reference book, no fixed format
+
+  issuerId    String
+  issuer      Party             @relation(fields: [issuerId], references: [id], onDelete: Restrict)
+
+  issuedOn         String        // payee name actually written on the cheque
+  issuedOnType     PartyType     // is issuedOn a firm or an individual?
+  chequeType       ChequeType    // derived from issuedOnType: FIRM -> ACCOUNT_PAYEE, INDIVIDUAL -> BEARER
+  payableToCompany Boolean       @default(true) // only meaningful when issuedOnType = FIRM: does that firm match your own company?
+
+  chqDate     DateTime          // date on the cheque / presenting date
+  chqNo       String            // unique per bank, see @@unique([bankId, chqNo]) below
+
+  // Drawee bank: the bank the cheque is drawn on (issuer's bank)
+  bankId      String
+  bank        Bank              @relation("DraweeBank", fields: [bankId], references: [id], onDelete: Restrict)
+
+  // Presenting bank: where WE deposited/presented it for collection (can differ from drawee bank)
+  presentedBankId String?
+  presentedBank   Bank?         @relation("PresentedBank", fields: [presentedBankId], references: [id], onDelete: Restrict)
+
+  amount      Decimal           @db.Decimal(14, 2)
+
+  status      ChequeStatus      @default(PENDING)
+  statusDate  DateTime          @default(now())
+
+  // When status becomes ON_CHECK, this captures what it was right before —
+  // so whoever picks up the investigation has a starting point, without
+  // pretending we still know for certain it's accurate.
+  previousStatus   ChequeStatus?
+  checkLogs        ChequeCheckLog[]
+
+  // Stored lifecycle duration: statusDate - chqDate, in days.
+  // Only meaningful once statusDate >= chqDate; null otherwise.
+  // NOTE: not auto-maintained by Prisma — must be recalculated whenever
+  // status/statusDate changes (in app code, or via a Postgres generated
+  // column set up in a custom migration).
+  totalDays   Int?
+
+  clearanceMethod ClearanceMethod?  // set when status becomes CLEARED
+
+  // Return handling
+  returnReason ReturnReason?
+  returnNote   String?
+
+  // Replacement chain: a returned cheque can be replaced by a new one
+  replacesChequeId String?  @unique
+  replaces         Cheque?  @relation("ChequeReplacement", fields: [replacesChequeId], references: [id], onDelete: Restrict)
+  replacedBy       Cheque?  @relation("ChequeReplacement")
+
+  staffId     String?
+  staff       Staff?            @relation("HandledBy", fields: [staffId], references: [id], onDelete: Restrict)
+
+  followUps   ChequeFollowUp[]
+  payments    ChequePayment[]
+
+  deletedAt   DateTime?         // soft delete — financial records are never hard-deleted
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@unique([bankId, chqNo])
+  @@index([status, chqDate])
+  @@index([chqDate])
+  @@index([receiptId])
+  @@index([issuerId])
+  @@index([presentedBankId])
+  @@index([staffId])
+  @@index([deletedAt])
+}
+
+model ChequeFollowUp {
+  id             String            @id @default(cuid())
+  chequeId       String
+  cheque         Cheque            @relation(fields: [chequeId], references: [id], onDelete: Restrict)
+
+  followUpDate   DateTime          @default(now())
+  response       FollowUpResponse
+  note           String?
+  nextActionDate DateTime?
+
+  staffId        String?
+  staff          Staff?            @relation("FollowedUpBy", fields: [staffId], references: [id], onDelete: Restrict)
+
+  createdAt      DateTime          @default(now())
+
+  @@index([chequeId])
+  @@index([staffId])
+}
+
+model ChequePayment {
+  id            String        @id @default(cuid())
+  chequeId      String
+  cheque        Cheque        @relation(fields: [chequeId], references: [id], onDelete: Restrict)
+
+  amount        Decimal       @db.Decimal(14, 2)
+  method        PaymentMethod
+  referenceNo   String?       // transaction/txn ref for IPS, CIPS, QR
+  paymentDate   DateTime      @default(now())
+  note          String?
+
+  staffId       String?
+  staff         Staff?        @relation("PaymentRecordedBy", fields: [staffId], references: [id], onDelete: Restrict)
+
+  createdAt     DateTime      @default(now())
+
+  @@index([chequeId])
+  @@index([staffId])
+}
+
+model IssuedCheque {
+  id          String              @id @default(cuid())
+
+  companyBankAccountId String
+  companyBankAccount   CompanyBankAccount @relation(fields: [companyBankAccountId], references: [id], onDelete: Restrict)
+
+  chqNo       String              // unique per our own account, see @@unique below
+  chqDate     DateTime
+
+  payeeId     String?
+  payee       Party?              @relation("PayeeParty", fields: [payeeId], references: [id], onDelete: Restrict)
+  payeeName   String              // name actually written on the cheque (may differ from payee.name)
+  payeeType   PartyType           // is payeeName a firm or an individual?
+  chequeType  ChequeType          // derived from payeeType: FIRM -> ACCOUNT_PAYEE, INDIVIDUAL -> BEARER
+
+  amount      Decimal             @db.Decimal(14, 2)
+  purpose     String?             // free-text note on what this payment is for
+
+  status      IssuedChequeStatus  @default(ISSUED)
+  statusDate  DateTime            @default(now())
+  totalDays   Int?                // stored; same recalculation caveat as Cheque.totalDays
+
+  // Same reconciliation pattern as the received-cheque side: when status
+  // becomes ON_CHECK (e.g. cheque book stub vs bank statement mismatch),
+  // this preserves what it was before, without pretending we're still sure.
+  previousStatus IssuedChequeStatus?
+  checkLogs      IssuedChequeCheckLog[]
+
+  clearanceMethod ClearanceMethod?
+  returnReason    ReturnReason?
+  returnNote      String?
+
+  // Replacement chain, same pattern as the received-cheque side
+  replacesChequeId String?        @unique
+  replaces         IssuedCheque?  @relation("IssuedChequeReplacement", fields: [replacesChequeId], references: [id], onDelete: Restrict)
+  replacedBy       IssuedCheque?  @relation("IssuedChequeReplacement")
+
+  issuedById  String?
+  issuedBy    Staff?              @relation("IssuedBy", fields: [issuedById], references: [id], onDelete: Restrict)
+
+  followUps   IssuedChequeFollowUp[]
+  payments    IssuedChequePayment[]
+
+  deletedAt   DateTime?           // soft delete — financial records are never hard-deleted
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@unique([companyBankAccountId, chqNo])
+  @@index([status, chqDate])
+  @@index([chqDate])
+  @@index([payeeId])
+  @@index([issuedById])
+  @@index([deletedAt])
+}
+
+model IssuedChequeFollowUp {
+  id             String                  @id @default(cuid())
+  issuedChequeId String
+  issuedCheque   IssuedCheque            @relation(fields: [issuedChequeId], references: [id], onDelete: Restrict)
+
+  followUpDate   DateTime                @default(now())
+  response       IssuedFollowUpResponse
+  note           String?
+  nextActionDate DateTime?
+
+  staffId        String?
+  staff          Staff?                  @relation("IssuedFollowedUpBy", fields: [staffId], references: [id], onDelete: Restrict)
+
+  createdAt      DateTime                @default(now())
+
+  @@index([issuedChequeId])
+  @@index([staffId])
+}
+
+model IssuedChequePayment {
+  id             String        @id @default(cuid())
+  issuedChequeId String
+  issuedCheque   IssuedCheque  @relation(fields: [issuedChequeId], references: [id], onDelete: Restrict)
+
+  amount         Decimal       @db.Decimal(14, 2)
+  method         PaymentMethod
+  referenceNo    String?
+  paymentDate    DateTime      @default(now())
+  note           String?
+
+  staffId        String?
+  staff          Staff?        @relation("IssuedPaymentRecordedBy", fields: [staffId], references: [id], onDelete: Restrict)
+
+  createdAt      DateTime      @default(now())
+
+  @@index([issuedChequeId])
+  @@index([staffId])
+}
+
+model ChequeCheckLog {
+  id        String   @id @default(cuid())
+  chequeId  String
+  cheque    Cheque   @relation(fields: [chequeId], references: [id], onDelete: Restrict)
+
+  raisedById   String?
+  raisedBy     Staff?  @relation("RaisedBy", fields: [raisedById], references: [id], onDelete: Restrict)
+  reason       String  // why this went to ON_CHECK, e.g. "not updated since last month"
+  raisedAt     DateTime @default(now())
+
+  resolvedAt     DateTime?     // null while still under investigation
+  resolvedStatus ChequeStatus? // what it turned out to actually be, once verified
+  resolutionNote String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([chequeId])
+  @@index([raisedById])
+}
+
+model IssuedChequeCheckLog {
+  id             String       @id @default(cuid())
+  issuedChequeId String
+  issuedCheque   IssuedCheque @relation(fields: [issuedChequeId], references: [id], onDelete: Restrict)
+
+  raisedById   String?
+  raisedBy     Staff?  @relation("IssuedRaisedBy", fields: [raisedById], references: [id], onDelete: Restrict)
+  reason       String  // e.g. "cheque stub vs bank statement mismatch during reconciliation"
+  raisedAt     DateTime @default(now())
+
+  resolvedAt     DateTime?           // null while still under investigation
+  resolvedStatus IssuedChequeStatus? // what it turned out to actually be, once verified
+  resolutionNote String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([issuedChequeId])
+  @@index([raisedById])
+}

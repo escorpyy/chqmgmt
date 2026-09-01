@@ -1,0 +1,78 @@
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { Prisma } from '@prisma/client';
+
+import { prisma } from './lib/prisma.js';
+import partiesRouter from './routes/parties.js';
+import banksRouter from './routes/banks.js';
+import staffRouter from './routes/staff.js';
+import companyBankAccountsRouter from './routes/companyBankAccounts.js';
+import receiptsRouter from './routes/receipts.js';
+import chequesRouter from './routes/cheques.js';
+import issuedChequesRouter from './routes/issuedCheques.js';
+import dashboardRouter from './routes/dashboard.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// ---- API routes ----------------------------------------------------------
+app.use('/api/parties', partiesRouter);
+app.use('/api/banks', banksRouter);
+app.use('/api/staff', staffRouter);
+app.use('/api/company-bank-accounts', companyBankAccountsRouter);
+app.use('/api/receipts', receiptsRouter);
+app.use('/api/cheques', chequesRouter);
+app.use('/api/issued-cheques', issuedChequesRouter);
+app.use('/api/dashboard', dashboardRouter);
+
+app.get('/api/health', async (req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ status: 'ok', db: 'connected' });
+  } catch (err) {
+    res.status(503).json({ status: 'error', db: 'disconnected', message: err.message });
+  }
+});
+
+// ---- Static frontend ------------------------------------------------------
+app.use(express.static(path.join(__dirname, 'public')));
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api/')) return next();
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// ---- Error handling ---------------------------------------------------
+app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
+  console.error(err);
+
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    if (err.code === 'P2002') {
+      return res.status(409).json({ error: `Unique constraint violated on: ${err.meta?.target}` });
+    }
+    if (err.code === 'P2003') {
+      return res.status(409).json({ error: 'Related record not found or referenced elsewhere (foreign key constraint).' });
+    }
+    if (err.code === 'P2025') {
+      return res.status(404).json({ error: 'Record not found.' });
+    }
+  }
+
+  // Postgres CHECK constraint / trigger violations (raw error code 23514, or
+  // a RAISE EXCEPTION from the payment-total triggers) surface here too.
+  if (err.code === '23514' || err.message?.includes('would push total payments')) {
+    return res.status(400).json({ error: err.meta?.message || err.message || 'Constraint violation' });
+  }
+
+  res.status(500).json({ error: 'Internal server error', detail: err.message });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Cheque tracker running at http://localhost:${PORT}`);
+});

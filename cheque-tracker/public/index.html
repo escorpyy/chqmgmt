@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cheque Register</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-title">
+    <h1>Cheque Register</h1>
+    <p>Received &amp; issued cheque ledger</p>
+  </div>
+  <div class="masthead-stats" id="masthead-stats">
+    <div class="stat"><span class="stat-label">Receivable outstanding</span><span class="stat-value" id="stat-receivable">—</span></div>
+    <div class="stat"><span class="stat-label">Payable outstanding</span><span class="stat-value" id="stat-payable">—</span></div>
+    <div class="stat stat-warn"><span class="stat-label">Under investigation</span><span class="stat-value" id="stat-oncheck">—</span></div>
+  </div>
+  <div class="masthead-status" id="db-status" title="Database connection">●</div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button class="tab active" data-tab="dashboard">Dashboard</button>
+  <button class="tab" data-tab="received">Received</button>
+  <button class="tab" data-tab="issued">Issued</button>
+  <button class="tab" data-tab="parties">Parties</button>
+  <button class="tab" data-tab="banks">Banks</button>
+  <button class="tab" data-tab="accounts">Our accounts</button>
+  <button class="tab" data-tab="staff">Staff</button>
+  <button class="tab" data-tab="receipts">Receipts</button>
+</nav>
+
+<main id="main">
+
+  <!-- DASHBOARD -->
+  <section class="panel active" id="panel-dashboard">
+    <div class="panel-head">
+      <h2>Overview</h2>
+    </div>
+    <div class="dash-grid">
+      <div class="dash-col">
+        <h3>Received cheques by status</h3>
+        <div id="dash-received-status" class="status-breakdown"></div>
+      </div>
+      <div class="dash-col">
+        <h3>Issued cheques by status</h3>
+        <div id="dash-issued-status" class="status-breakdown"></div>
+      </div>
+    </div>
+    <div class="dash-followups">
+      <h3>Cheques needing attention</h3>
+      <p class="hint">Pending or in follow-up, oldest first.</p>
+      <div id="dash-attention-table"></div>
+    </div>
+  </section>
+
+  <!-- RECEIVED CHEQUES -->
+  <section class="panel" id="panel-received">
+    <div class="panel-head">
+      <h2>Received cheques</h2>
+      <button class="btn btn-primary" id="btn-new-cheque">+ New cheque</button>
+    </div>
+    <div class="toolbar">
+      <input type="search" id="received-search" placeholder="Search cheque no, ref no, issuer…">
+      <select id="received-status-filter">
+        <option value="">All statuses</option>
+        <option value="PENDING">Pending</option>
+        <option value="FOLLOWUP">Follow-up</option>
+        <option value="ON_CHECK">On check</option>
+        <option value="PRESENTED">Presented</option>
+        <option value="CLEARED">Cleared</option>
+        <option value="RETURNED">Returned</option>
+      </select>
+    </div>
+    <div id="received-table"></div>
+  </section>
+
+  <!-- ISSUED CHEQUES -->
+  <section class="panel" id="panel-issued">
+    <div class="panel-head">
+      <h2>Issued cheques</h2>
+      <button class="btn btn-primary" id="btn-new-issued">+ New issued cheque</button>
+    </div>
+    <div class="toolbar">
+      <input type="search" id="issued-search" placeholder="Search cheque no, payee, purpose…">
+      <select id="issued-status-filter">
+        <option value="">All statuses</option>
+        <option value="ISSUED">Issued</option>
+        <option value="FOLLOWUP">Follow-up</option>
+        <option value="ON_CHECK">On check</option>
+        <option value="PRESENTED">Presented</option>
+        <option value="CLEARED">Cleared</option>
+        <option value="RETURNED">Returned</option>
+        <option value="STOPPED">Stopped</option>
+      </select>
+    </div>
+    <div id="issued-table"></div>
+  </section>
+
+  <!-- PARTIES -->
+  <section class="panel" id="panel-parties">
+    <div class="panel-head">
+      <h2>Parties</h2>
+      <button class="btn btn-primary" id="btn-new-party">+ New party</button>
+    </div>
+    <div class="toolbar">
+      <input type="search" id="party-search" placeholder="Search by name…">
+      <select id="party-type-filter">
+        <option value="">Firms &amp; individuals</option>
+        <option value="FIRM">Firms only</option>
+        <option value="INDIVIDUAL">Individuals only</option>
+      </select>
+    </div>
+    <div id="parties-table"></div>
+  </section>
+
+  <!-- BANKS -->
+  <section class="panel" id="panel-banks">
+    <div class="panel-head">
+      <h2>Banks</h2>
+      <button class="btn btn-primary" id="btn-new-bank">+ New bank</button>
+    </div>
+    <div id="banks-table"></div>
+  </section>
+
+  <!-- COMPANY BANK ACCOUNTS -->
+  <section class="panel" id="panel-accounts">
+    <div class="panel-head">
+      <h2>Our bank accounts</h2>
+      <button class="btn btn-primary" id="btn-new-account">+ New account</button>
+    </div>
+    <p class="hint">Accounts cheques are issued from.</p>
+    <div id="accounts-table"></div>
+  </section>
+
+  <!-- STAFF -->
+  <section class="panel" id="panel-staff">
+    <div class="panel-head">
+      <h2>Staff</h2>
+      <button class="btn btn-primary" id="btn-new-staff">+ New staff</button>
+    </div>
+    <div id="staff-table"></div>
+  </section>
+
+  <!-- RECEIPTS -->
+  <section class="panel" id="panel-receipts">
+    <div class="panel-head">
+      <h2>Receipts</h2>
+      <button class="btn btn-primary" id="btn-new-receipt">+ New receipt</button>
+    </div>
+    <p class="hint">A receipt groups a cheque with its fiscal year and receipt number; the same receipt carries across cheque replacements.</p>
+    <div id="receipts-table"></div>
+  </section>
+
+</main>
+
+<div id="drawer-backdrop" class="drawer-backdrop"></div>
+<aside id="drawer" class="drawer"><div id="drawer-content"></div></aside>
+
+<div id="modal-backdrop" class="modal-backdrop"></div>
+<div id="modal" class="modal"><div id="modal-content"></div></div>
+
+<div id="toast-root" class="toast-root"></div>
+
+<script src="script.js"></script>
+</body>
+</html>

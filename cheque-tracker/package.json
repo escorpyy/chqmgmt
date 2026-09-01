@@ -1,0 +1,29 @@
+{
+  "name": "cheque-tracker",
+  "version": "1.0.0",
+  "description": "Cheque receivable/payable tracker — Express + Prisma + PostgreSQL",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node --watch server.js",
+    "start": "node server.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:studio": "prisma studio",
+    "db:apply-manual": "node scripts/apply-manual-migration.js"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^5.20.0",
+    "@prisma/client": "^5.20.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "prisma": "^5.20.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
