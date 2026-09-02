@@ -151,10 +151,34 @@ model CompanyBankAccount {
   accountNumber String   @unique
   branch        String?
   issuedCheques IssuedCheque[]
+  dailyBalances DailyBankBalance[]
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   @@index([bankId])
+}
+
+// One row per company bank account per calendar day. openingBalance and
+// receivedToday are both entered by hand each morning — receivedToday is a
+// manual running total for now (e.g. cash/other deposits), not pulled from
+// cleared received cheques. "Cheques due" (how much of that balance is
+// already spoken for) is NOT stored here — it's computed on read from
+// IssuedCheque, since it changes as cheques get cancelled/cleared/etc.
+model DailyBankBalance {
+  id                    String             @id @default(cuid())
+
+  companyBankAccountId  String
+  companyBankAccount    CompanyBankAccount @relation(fields: [companyBankAccountId], references: [id], onDelete: Restrict)
+
+  date                  DateTime           @db.Date
+  openingBalance        Decimal            @db.Decimal(14, 2)
+  receivedToday         Decimal            @default(0) @db.Decimal(14, 2)
+
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  @@unique([companyBankAccountId, date])
+  @@index([date])
 }
 
 model Cheque {

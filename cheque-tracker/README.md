@@ -99,6 +99,11 @@ Open **http://localhost:3000**.
   and later resolve that, or issue a replacement cheque for a returned one.
 - **Issued** — same lifecycle from the payable side, plus a "Stop payment"
   action.
+- **Daily Balance** — per bank account, each morning: enter opening balance
+  and anything received that day. "Cheques due" is computed automatically —
+  every still-`ISSUED` cheque with `chqDate` on or before the selected day,
+  however old, so nothing already in flight gets forgotten. Available balance
+  = opening − cheques due + received. Exports to Excel.
 - **Parties, Banks, Our accounts, Staff, Receipts** — the reference data
   everything else hangs off of.
 

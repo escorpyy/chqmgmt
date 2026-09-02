@@ -14,6 +14,7 @@ import receiptsRouter from './routes/receipts.js';
 import chequesRouter from './routes/cheques.js';
 import issuedChequesRouter from './routes/issuedCheques.js';
 import dashboardRouter from './routes/dashboard.js';
+import dailyBalanceRouter from './routes/dailyBalance.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -30,6 +31,7 @@ app.use('/api/receipts', receiptsRouter);
 app.use('/api/cheques', chequesRouter);
 app.use('/api/issued-cheques', issuedChequesRouter);
 app.use('/api/dashboard', dashboardRouter);
+app.use('/api/daily-balance', dailyBalanceRouter);
 
 app.get('/api/health', async (req, res) => {
   try {

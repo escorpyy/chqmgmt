@@ -27,6 +27,7 @@
   <button class="tab active" data-tab="dashboard">Dashboard</button>
   <button class="tab" data-tab="received">Received</button>
   <button class="tab" data-tab="issued">Issued</button>
+  <button class="tab" data-tab="daily-balance">Daily Balance</button>
   <button class="tab" data-tab="parties">Parties</button>
   <button class="tab" data-tab="banks">Banks</button>
   <button class="tab" data-tab="accounts">Our accounts</button>
@@ -99,6 +100,23 @@
       </select>
     </div>
     <div id="issued-table"></div>
+  </section>
+
+  <!-- DAILY BALANCE -->
+  <section class="panel" id="panel-daily-balance">
+    <div class="panel-head">
+      <h2>Daily bank balance</h2>
+      <div class="row-actions-group">
+        <input type="date" id="db-date-picker">
+        <button class="btn" id="btn-db-export">Export to Excel</button>
+      </div>
+    </div>
+    <p class="hint">
+      Enter each account's opening balance and anything received today. "Cheques due" is
+      pulled automatically — every issued cheque dated on or before this day that's still
+      outstanding, however old, so you know what has to stay covered for it not to bounce.
+    </p>
+    <div id="daily-balance-table"></div>
   </section>
 
   <!-- PARTIES -->

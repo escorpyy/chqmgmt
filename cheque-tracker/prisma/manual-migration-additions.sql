@@ -129,6 +129,16 @@ CREATE TRIGGER trg_check_issuedcheque_payment_total
 
 
 -- ----------------------------------------------------------------------------
+-- N. DailyBankBalance: opening balance and received-today can't go negative
+--    (unlike Cheque/IssuedCheque amounts, 0 is a valid balance, so >= not >)
+-- ----------------------------------------------------------------------------
+ALTER TABLE "DailyBankBalance" ADD CONSTRAINT chk_dailybankbalance_opening_nonnegative
+  CHECK ("openingBalance" >= 0);
+ALTER TABLE "DailyBankBalance" ADD CONSTRAINT chk_dailybankbalance_received_nonnegative
+  CHECK ("receivedToday" >= 0);
+
+
+-- ----------------------------------------------------------------------------
 -- NOT included here (needs app-level logic, not a DB rule):
 --   - referenceNo required when method IN ('IPS','CIPS','QR') but optional
 --     for CASH — this is a *conditional* requirement based on another
