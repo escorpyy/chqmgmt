@@ -23,17 +23,20 @@ router.get('/:id', asyncHandler(async (req, res) => {
 
 router.post('/', asyncHandler(async (req, res) => {
   const { name, branch } = req.body;
-  if (!name) return res.status(400).json({ error: 'name is required' });
-  const bank = await prisma.bank.create({ data: { name, branch } });
+  if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
+  const bank = await prisma.bank.create({ data: { name: name.trim(), branch } });
   res.status(201).json(bank);
 }));
 
 router.patch('/:id', asyncHandler(async (req, res) => {
   const { name, branch } = req.body;
+  if (name !== undefined && !name.trim()) {
+    return res.status(400).json({ error: 'name cannot be blank' });
+  }
   const bank = await prisma.bank.update({
     where: { id: req.params.id },
     data: {
-      ...(name !== undefined ? { name } : {}),
+      ...(name !== undefined ? { name: name.trim() } : {}),
       ...(branch !== undefined ? { branch } : {}),
     },
   });

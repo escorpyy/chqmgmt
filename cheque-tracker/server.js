@@ -63,10 +63,24 @@ app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
     }
   }
 
-  // Postgres CHECK constraint / trigger violations (raw error code 23514, or
-  // a RAISE EXCEPTION from the payment-total triggers) surface here too.
-  if (err.code === '23514' || err.message?.includes('would push total payments')) {
+  // Postgres CHECK constraint / trigger violations. Prisma Client doesn't
+  // always surface the raw SQLSTATE (23514) on err.code for calls that
+  // aren't $queryRaw, so also match on the trigger's own RAISE EXCEPTION
+  // text and the constraint-name fragments used in manual-migration-additions.sql.
+  if (
+    err.code === '23514'
+    || err.message?.includes('would push total payments')
+    || err.message?.includes('violates check constraint')
+  ) {
     return res.status(400).json({ error: err.meta?.message || err.message || 'Constraint violation' });
+  }
+
+  // Malformed request shape (e.g. an enum-like field that slipped past
+  // route-level validation, or a value of the wrong type) — Prisma throws
+  // PrismaClientValidationError for these, not PrismaClientKnownRequestError,
+  // so without this branch they fell through to a bare 500.
+  if (err instanceof Prisma.PrismaClientValidationError) {
+    return res.status(400).json({ error: 'Invalid request data.' });
   }
 
   res.status(500).json({ error: 'Internal server error', detail: err.message });

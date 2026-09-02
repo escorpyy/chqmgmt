@@ -2,6 +2,10 @@ import { Router } from 'express';
 import { prisma } from '../lib/prisma.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
 import { computeTotalDays, deriveChequeType } from '../lib/chequeHelpers.js';
+import {
+  CHEQUE_STATUSES, CLEARANCE_METHODS, FOLLOWUP_RESPONSES, RETURN_REASONS,
+  PAYMENT_METHODS, PARTY_TYPES, isValidEnum, parseDateOrNull, isPositiveAmount,
+} from '../lib/enums.js';
 
 const router = Router();
 
@@ -66,7 +70,19 @@ router.post('/', asyncHandler(async (req, res) => {
   if (missing.length) {
     return res.status(400).json({ error: `Missing required fields: ${missing.map(([k]) => k).join(', ')}` });
   }
+  if (!isValidEnum(issuedOnType, PARTY_TYPES)) {
+    return res.status(400).json({ error: `issuedOnType must be one of: ${PARTY_TYPES.join(', ')}` });
+  }
+  if (!isPositiveAmount(amount)) {
+    return res.status(400).json({ error: 'amount must be a positive number' });
+  }
+  const parsedChqDate = parseDateOrNull(chqDate);
+  if (!parsedChqDate) {
+    return res.status(400).json({ error: 'chqDate is not a valid date' });
+  }
 
+  // payableToCompany is only meaningful when issuedOnType is FIRM; force it
+  // to false for INDIVIDUAL payees rather than trusting the client to omit it.
   const cheque = await prisma.cheque.create({
     data: {
       receiptId,
@@ -75,8 +91,8 @@ router.post('/', asyncHandler(async (req, res) => {
       issuedOn,
       issuedOnType,
       chequeType: deriveChequeType(issuedOnType),
-      payableToCompany: payableToCompany ?? true,
-      chqDate: new Date(chqDate),
+      payableToCompany: issuedOnType === 'FIRM' ? (payableToCompany ?? true) : false,
+      chqDate: parsedChqDate,
       chqNo,
       bankId,
       presentedBankId: presentedBankId || null,
@@ -91,6 +107,25 @@ router.post('/', asyncHandler(async (req, res) => {
 // PATCH /api/cheques/:id  (edit non-status fields)
 router.patch('/:id', asyncHandler(async (req, res) => {
   const { refNo, presentedBankId, staffId, amount } = req.body;
+
+  const existing = await prisma.cheque.findFirst({
+    where: { id: req.params.id, deletedAt: null },
+    include: { payments: true },
+  });
+  if (!existing) return res.status(404).json({ error: 'Cheque not found' });
+
+  if (amount !== undefined) {
+    if (!isPositiveAmount(amount)) {
+      return res.status(400).json({ error: 'amount must be a positive number' });
+    }
+    const alreadyPaid = existing.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+    if (Number(amount) < alreadyPaid) {
+      return res.status(400).json({
+        error: `amount (${amount}) cannot be less than payments already recorded against this cheque (${alreadyPaid})`,
+      });
+    }
+  }
+
   const cheque = await prisma.cheque.update({
     where: { id: req.params.id },
     data: {
@@ -109,11 +144,25 @@ router.patch('/:id', asyncHandler(async (req, res) => {
 router.patch('/:id/status', asyncHandler(async (req, res) => {
   const { status, clearanceMethod, returnReason, returnNote, statusDate } = req.body;
   if (!status) return res.status(400).json({ error: 'status is required' });
+  if (!isValidEnum(status, CHEQUE_STATUSES)) {
+    return res.status(400).json({ error: `status must be one of: ${CHEQUE_STATUSES.join(', ')}` });
+  }
+  if (!isValidEnum(clearanceMethod, CLEARANCE_METHODS)) {
+    return res.status(400).json({ error: `clearanceMethod must be one of: ${CLEARANCE_METHODS.join(', ')}` });
+  }
+  if (!isValidEnum(returnReason, RETURN_REASONS)) {
+    return res.status(400).json({ error: `returnReason must be one of: ${RETURN_REASONS.join(', ')}` });
+  }
 
-  const existing = await prisma.cheque.findUnique({ where: { id: req.params.id } });
+  const existing = await prisma.cheque.findFirst({ where: { id: req.params.id, deletedAt: null } });
   if (!existing) return res.status(404).json({ error: 'Cheque not found' });
 
-  const newStatusDate = statusDate ? new Date(statusDate) : new Date();
+  let newStatusDate = new Date();
+  if (statusDate) {
+    const parsed = parseDateOrNull(statusDate);
+    if (!parsed) return res.status(400).json({ error: 'statusDate is not a valid date' });
+    newStatusDate = parsed;
+  }
   const totalDays = computeTotalDays(existing.chqDate, newStatusDate);
 
   const cheque = await prisma.cheque.update({
@@ -133,12 +182,28 @@ router.patch('/:id/status', asyncHandler(async (req, res) => {
 
 // POST /api/cheques/:id/replace — create a replacement cheque for a returned one
 router.post('/:id/replace', asyncHandler(async (req, res) => {
-  const original = await prisma.cheque.findUnique({ where: { id: req.params.id } });
+  const original = await prisma.cheque.findFirst({
+    where: { id: req.params.id, deletedAt: null },
+    include: { replacedBy: true },
+  });
   if (!original) return res.status(404).json({ error: 'Original cheque not found' });
+  if (original.status !== 'RETURNED') {
+    return res.status(400).json({ error: 'Only a RETURNED cheque can be replaced' });
+  }
+  if (original.replacedBy) {
+    return res.status(400).json({ error: 'This cheque has already been replaced' });
+  }
 
   const {
     refNo, chqDate, chqNo, bankId, presentedBankId, amount, staffId,
   } = req.body;
+
+  if (!chqNo) return res.status(400).json({ error: 'chqNo is required' });
+  const parsedChqDate = parseDateOrNull(chqDate);
+  if (!parsedChqDate) return res.status(400).json({ error: 'chqDate is not a valid date' });
+  if (amount !== undefined && !isPositiveAmount(amount)) {
+    return res.status(400).json({ error: 'amount must be a positive number' });
+  }
 
   const replacement = await prisma.cheque.create({
     data: {
@@ -149,7 +214,7 @@ router.post('/:id/replace', asyncHandler(async (req, res) => {
       issuedOnType: original.issuedOnType,
       chequeType: original.chequeType,
       payableToCompany: original.payableToCompany,
-      chqDate: new Date(chqDate),
+      chqDate: parsedChqDate,
       chqNo,
       bankId: bankId ?? original.bankId,
       presentedBankId: presentedBankId ?? original.presentedBankId,
@@ -166,34 +231,49 @@ router.post('/:id/replace', asyncHandler(async (req, res) => {
 router.post('/:id/followups', asyncHandler(async (req, res) => {
   const { response, note, nextActionDate, staffId, followUpDate, updateStatus } = req.body;
   if (!response) return res.status(400).json({ error: 'response is required' });
+  if (!isValidEnum(response, FOLLOWUP_RESPONSES)) {
+    return res.status(400).json({ error: `response must be one of: ${FOLLOWUP_RESPONSES.join(', ')}` });
+  }
+  const parsedNextActionDate = nextActionDate ? parseDateOrNull(nextActionDate) : null;
+  if (nextActionDate && !parsedNextActionDate) {
+    return res.status(400).json({ error: 'nextActionDate is not a valid date' });
+  }
+  const parsedFollowUpDate = followUpDate ? parseDateOrNull(followUpDate) : undefined;
+  if (followUpDate && !parsedFollowUpDate) {
+    return res.status(400).json({ error: 'followUpDate is not a valid date' });
+  }
 
-  const cheque = await prisma.cheque.findUnique({ where: { id: req.params.id } });
+  const cheque = await prisma.cheque.findFirst({ where: { id: req.params.id, deletedAt: null } });
   if (!cheque) return res.status(404).json({ error: 'Cheque not found' });
 
-  const followUp = await prisma.chequeFollowUp.create({
-    data: {
-      chequeId: req.params.id,
-      response,
-      note,
-      nextActionDate: nextActionDate ? new Date(nextActionDate) : null,
-      staffId: staffId || null,
-      followUpDate: followUpDate ? new Date(followUpDate) : undefined,
-    },
-  });
+  // Create the follow-up and, if applicable, move the cheque into the
+  // FOLLOWUP status bucket atomically — a crash between the two used to be
+  // able to leave a follow-up logged with no matching status change.
+  const newStatusDate = new Date();
+  const shouldAdvanceStatus = updateStatus !== false && cheque.status === 'PENDING';
 
-  // Optionally move the cheque into the FOLLOWUP status bucket to reflect
-  // that it's now in the call/negotiation cycle.
-  if (updateStatus !== false && cheque.status === 'PENDING') {
-    const newStatusDate = new Date();
-    await prisma.cheque.update({
-      where: { id: req.params.id },
+  const [followUp] = await prisma.$transaction([
+    prisma.chequeFollowUp.create({
       data: {
-        status: 'FOLLOWUP',
-        statusDate: newStatusDate,
-        totalDays: computeTotalDays(cheque.chqDate, newStatusDate),
+        chequeId: req.params.id,
+        response,
+        note,
+        nextActionDate: parsedNextActionDate,
+        staffId: staffId || null,
+        followUpDate: parsedFollowUpDate,
       },
-    });
-  }
+    }),
+    ...(shouldAdvanceStatus
+      ? [prisma.cheque.update({
+          where: { id: req.params.id },
+          data: {
+            status: 'FOLLOWUP',
+            statusDate: newStatusDate,
+            totalDays: computeTotalDays(cheque.chqDate, newStatusDate),
+          },
+        })]
+      : []),
+  ]);
 
   res.status(201).json(followUp);
 }));
@@ -202,9 +282,17 @@ router.post('/:id/followups', asyncHandler(async (req, res) => {
 router.post('/:id/payments', asyncHandler(async (req, res) => {
   const { amount, method, referenceNo, note, paymentDate, staffId } = req.body;
   if (!amount || !method) return res.status(400).json({ error: 'amount and method are required' });
+  if (!isPositiveAmount(amount)) return res.status(400).json({ error: 'amount must be a positive number' });
+  if (!isValidEnum(method, PAYMENT_METHODS)) {
+    return res.status(400).json({ error: `method must be one of: ${PAYMENT_METHODS.join(', ')}` });
+  }
+  const parsedPaymentDate = paymentDate ? parseDateOrNull(paymentDate) : undefined;
+  if (paymentDate && !parsedPaymentDate) {
+    return res.status(400).json({ error: 'paymentDate is not a valid date' });
+  }
 
-  const cheque = await prisma.cheque.findUnique({
-    where: { id: req.params.id },
+  const cheque = await prisma.cheque.findFirst({
+    where: { id: req.params.id, deletedAt: null },
     include: { payments: true },
   });
   if (!cheque) return res.status(404).json({ error: 'Cheque not found' });
@@ -218,31 +306,36 @@ router.post('/:id/payments', asyncHandler(async (req, res) => {
     });
   }
 
-  const payment = await prisma.chequePayment.create({
-    data: {
-      chequeId: req.params.id,
-      amount,
-      method,
-      referenceNo,
-      note,
-      paymentDate: paymentDate ? new Date(paymentDate) : undefined,
-      staffId: staffId || null,
-    },
-  });
-
+  // Record the payment and, if it settles the cheque, flip the status in
+  // the same transaction so the two writes can't drift apart on failure.
   const newTotal = alreadyPaid + Number(amount);
-  if (newTotal >= Number(cheque.amount)) {
-    const newStatusDate = new Date();
-    await prisma.cheque.update({
-      where: { id: req.params.id },
+  const settles = newTotal >= Number(cheque.amount);
+  const newStatusDate = new Date();
+
+  const [payment] = await prisma.$transaction([
+    prisma.chequePayment.create({
       data: {
-        status: 'CLEARED',
-        clearanceMethod: 'PARTIAL_RECOVERY',
-        statusDate: newStatusDate,
-        totalDays: computeTotalDays(cheque.chqDate, newStatusDate),
+        chequeId: req.params.id,
+        amount,
+        method,
+        referenceNo,
+        note,
+        paymentDate: parsedPaymentDate,
+        staffId: staffId || null,
       },
-    });
-  }
+    }),
+    ...(settles
+      ? [prisma.cheque.update({
+          where: { id: req.params.id },
+          data: {
+            status: 'CLEARED',
+            clearanceMethod: 'PARTIAL_RECOVERY',
+            statusDate: newStatusDate,
+            totalDays: computeTotalDays(cheque.chqDate, newStatusDate),
+          },
+        })]
+      : []),
+  ]);
 
   res.status(201).json(payment);
 }));
@@ -252,23 +345,30 @@ router.post('/:id/checklogs', asyncHandler(async (req, res) => {
   const { reason, raisedById } = req.body;
   if (!reason) return res.status(400).json({ error: 'reason is required' });
 
-  const cheque = await prisma.cheque.findUnique({ where: { id: req.params.id } });
-  if (!cheque) return res.status(404).json({ error: 'Cheque not found' });
-
-  const checkLog = await prisma.chequeCheckLog.create({
-    data: { chequeId: req.params.id, reason, raisedById: raisedById || null },
+  const cheque = await prisma.cheque.findFirst({
+    where: { id: req.params.id, deletedAt: null },
+    include: { checkLogs: { where: { resolvedAt: null } } },
   });
+  if (!cheque) return res.status(404).json({ error: 'Cheque not found' });
+  if (cheque.checkLogs.length > 0) {
+    return res.status(400).json({ error: 'This cheque already has an open, unresolved check log' });
+  }
 
   const newStatusDate = new Date();
-  await prisma.cheque.update({
-    where: { id: req.params.id },
-    data: {
-      status: 'ON_CHECK',
-      previousStatus: cheque.status,
-      statusDate: newStatusDate,
-      totalDays: computeTotalDays(cheque.chqDate, newStatusDate),
-    },
-  });
+  const [checkLog] = await prisma.$transaction([
+    prisma.chequeCheckLog.create({
+      data: { chequeId: req.params.id, reason, raisedById: raisedById || null },
+    }),
+    prisma.cheque.update({
+      where: { id: req.params.id },
+      data: {
+        status: 'ON_CHECK',
+        previousStatus: cheque.status,
+        statusDate: newStatusDate,
+        totalDays: computeTotalDays(cheque.chqDate, newStatusDate),
+      },
+    }),
+  ]);
 
   res.status(201).json(checkLog);
 }));
@@ -277,27 +377,40 @@ router.post('/:id/checklogs', asyncHandler(async (req, res) => {
 router.patch('/:id/checklogs/:checkLogId/resolve', asyncHandler(async (req, res) => {
   const { resolvedStatus, resolutionNote } = req.body;
   if (!resolvedStatus) return res.status(400).json({ error: 'resolvedStatus is required' });
+  if (!isValidEnum(resolvedStatus, CHEQUE_STATUSES) || resolvedStatus === 'ON_CHECK') {
+    return res.status(400).json({ error: `resolvedStatus must be one of: ${CHEQUE_STATUSES.filter((s) => s !== 'ON_CHECK').join(', ')}` });
+  }
 
-  const cheque = await prisma.cheque.findUnique({ where: { id: req.params.id } });
+  const cheque = await prisma.cheque.findFirst({ where: { id: req.params.id, deletedAt: null } });
   if (!cheque) return res.status(404).json({ error: 'Cheque not found' });
 
-  const checkLog = await prisma.chequeCheckLog.update({
-    where: { id: req.params.checkLogId },
-    data: { resolvedAt: new Date(), resolvedStatus, resolutionNote },
+  // Must belong to THIS cheque — previously :id and :checkLogId were never
+  // cross-checked, so a mismatched pair could resolve a different cheque's
+  // check log while updating this cheque's status.
+  const checkLog = await prisma.chequeCheckLog.findFirst({
+    where: { id: req.params.checkLogId, chequeId: req.params.id },
   });
+  if (!checkLog) return res.status(404).json({ error: 'Check log not found for this cheque' });
+  if (checkLog.resolvedAt) return res.status(400).json({ error: 'This check log is already resolved' });
 
   const newStatusDate = new Date();
-  await prisma.cheque.update({
-    where: { id: req.params.id },
-    data: {
-      status: resolvedStatus,
-      previousStatus: null,
-      statusDate: newStatusDate,
-      totalDays: computeTotalDays(cheque.chqDate, newStatusDate),
-    },
-  });
+  const [resolved] = await prisma.$transaction([
+    prisma.chequeCheckLog.update({
+      where: { id: req.params.checkLogId },
+      data: { resolvedAt: newStatusDate, resolvedStatus, resolutionNote },
+    }),
+    prisma.cheque.update({
+      where: { id: req.params.id },
+      data: {
+        status: resolvedStatus,
+        previousStatus: null,
+        statusDate: newStatusDate,
+        totalDays: computeTotalDays(cheque.chqDate, newStatusDate),
+      },
+    }),
+  ]);
 
-  res.json(checkLog);
+  res.json(resolved);
 }));
 
 // DELETE /api/cheques/:id  (soft delete)

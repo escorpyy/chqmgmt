@@ -28,4 +28,20 @@ router.get('/:id', asyncHandler(async (req, res) => {
   res.json(receipt);
 }));
 
+// PATCH /api/receipts/:id
+router.patch('/:id', asyncHandler(async (req, res) => {
+  const { fiscalYear, receiptNo } = req.body;
+  if (fiscalYear !== undefined && !fiscalYear) {
+    return res.status(400).json({ error: 'fiscalYear cannot be blank' });
+  }
+  const receipt = await prisma.receipt.update({
+    where: { id: req.params.id },
+    data: {
+      ...(fiscalYear !== undefined ? { fiscalYear } : {}),
+      ...(receiptNo !== undefined ? { receiptNo } : {}),
+    },
+  });
+  res.json(receipt);
+}));
+
 export default router;

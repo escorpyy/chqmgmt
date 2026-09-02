@@ -12,6 +12,15 @@ router.get('/', asyncHandler(async (req, res) => {
   res.json(accounts);
 }));
 
+router.get('/:id', asyncHandler(async (req, res) => {
+  const account = await prisma.companyBankAccount.findUnique({
+    where: { id: req.params.id },
+    include: { bank: true, _count: { select: { issuedCheques: true } } },
+  });
+  if (!account) return res.status(404).json({ error: 'Company bank account not found' });
+  res.json(account);
+}));
+
 router.post('/', asyncHandler(async (req, res) => {
   const { bankId, accountName, accountNumber, branch } = req.body;
   if (!bankId || !accountName || !accountNumber) {
