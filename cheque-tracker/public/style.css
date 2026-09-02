@@ -171,6 +171,16 @@ main { padding: 1.75rem 2rem 4rem; max-width: 1280px; margin: 0 auto; }
   color: var(--ink);
 }
 .toolbar input[type="search"] { flex: 1; max-width: 320px; }
+.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.checkbox-field input { cursor: pointer; }
 
 /* ==========================================================================
    Tables — open-ledger look: horizontal rules only
@@ -203,6 +213,24 @@ table.ledger tbody tr:last-child td { border-bottom: none; }
 .amount { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; display: block; }
 .empty-row td { text-align: center; color: var(--ink-faint); padding: 2.5rem 1rem; font-style: italic; }
 .muted { color: var(--ink-faint); }
+.row-deleted { opacity: 0.55; }
+.row-deleted td { font-style: italic; }
+.tag-deleted {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--danger);
+  background: var(--danger-tint);
+  border-radius: var(--radius);
+  padding: 0.1rem 0.4rem;
+  margin-left: 0.4rem;
+}
+td.row-actions {
+  text-align: right;
+  white-space: nowrap;
+  cursor: default;
+}
+.row-actions-group { display: inline-flex; gap: 0.4rem; }
 
 /* Status tag */
 .status-tag {

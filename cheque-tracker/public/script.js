@@ -158,6 +158,34 @@ function clearFormError(form) {
   if (el) el.classList.remove('show');
 }
 
+// openConfirmModal: shows a confirmation dialog, resolves true/false with the user's choice.
+function openConfirmModal(title, message, { confirmLabel = 'Delete', danger = true } = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      closeModal();
+      resolve(result);
+    };
+    const body = `
+      <p class="hint" style="margin-top:0">${message}</p>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" id="confirm-cancel-btn">Cancel</button>
+        <button type="button" class="btn ${danger ? 'btn-danger' : 'btn-primary'}" id="confirm-ok-btn">${confirmLabel}</button>
+      </div>`;
+    openModal(title, body, {
+      onMount: () => {
+        document.getElementById('confirm-cancel-btn').addEventListener('click', () => finish(false));
+        document.getElementById('confirm-ok-btn').addEventListener('click', () => finish(true));
+      },
+    });
+    // Closing via the × button or backdrop also counts as "cancel".
+    document.getElementById('modal-close-btn')?.addEventListener('click', () => finish(false));
+    document.getElementById('modal-backdrop').addEventListener('click', () => finish(false), { once: true });
+  });
+}
+
 // ============================================================================
 // Drawer
 // ============================================================================
@@ -454,6 +482,8 @@ function renderChequeDrawer(c) {
       ${canCheckLog ? `<button class="btn btn-sm" data-action="checklog">Flag for check</button>` : ''}
       ${openCheckLog ? `<button class="btn btn-sm" data-action="resolve-checklog" data-log-id="${openCheckLog.id}">Resolve check</button>` : ''}
       ${canReplace ? `<button class="btn btn-sm" data-action="replace">Issue replacement</button>` : ''}
+      <button class="btn btn-sm" data-action="edit">Edit details</button>
+      <button class="btn btn-sm btn-danger" data-action="delete">Delete cheque</button>
     </div>
 
     <div class="section-title">Follow-ups</div>
@@ -504,8 +534,79 @@ function wireChequeActions(c) {
       if (action === 'checklog') openChequeCheckLogModal(c);
       if (action === 'resolve-checklog') openChequeResolveCheckLogModal(c, btn.dataset.logId);
       if (action === 'replace') openChequeReplaceModal(c);
+      if (action === 'edit') openChequeEditModal(c);
+      if (action === 'delete') deleteCheque(c);
     });
   });
+}
+
+function openChequeEditModal(c) {
+  const body = `
+    <form id="form-edit-cheque">
+      <div class="form-error"></div>
+      <div class="form-grid">
+        <div class="field">
+          <label>Ref no</label>
+          <input name="refNo" type="text" value="${escapeHtml(c.refNo || '')}">
+        </div>
+        <div class="field">
+          <label>Amount *</label>
+          <input name="amount" type="number" step="0.01" min="0.01" required value="${escapeHtml(c.amount)}">
+        </div>
+        <div class="field">
+          <label>Presented at bank</label>
+          <select name="presentedBankId">${selectOptions(state.banks, 'id', (b) => b.name, 'Same as drawee bank')}</select>
+        </div>
+        <div class="field">
+          <label>Handled by staff</label>
+          <select name="staffId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" id="cancel-edit-cheque">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save changes</button>
+      </div>
+    </form>`;
+  openModal(`Edit cheque — ${escapeHtml(c.chqNo)}`, body, {
+    onMount: () => {
+      const form = document.getElementById('form-edit-cheque');
+      form.querySelector('[name="presentedBankId"]').value = c.presentedBankId || '';
+      form.querySelector('[name="staffId"]').value = c.staffId || '';
+      document.getElementById('cancel-edit-cheque').addEventListener('click', closeModal);
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        clearFormError(form);
+        const data = Object.fromEntries(new FormData(form).entries());
+        try {
+          await api(`/cheques/${c.id}`, { method: 'PATCH', body: JSON.stringify(data) });
+          toast('Cheque updated', 'success');
+          closeModal();
+          openChequeDetail(c.id);
+          loadReceived();
+          loadDashboard();
+        } catch (err) {
+          formError(form, err.message);
+        }
+      });
+    },
+  });
+}
+
+async function deleteCheque(c) {
+  const ok = await openConfirmModal(
+    'Delete cheque?',
+    `This removes cheque ${escapeHtml(c.chqNo)} from active lists. Its history is kept, not erased.`,
+  );
+  if (!ok) return;
+  try {
+    await api(`/cheques/${c.id}`, { method: 'DELETE' });
+    toast('Cheque deleted', 'success');
+    closeDrawer();
+    loadReceived();
+    loadDashboard();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
 }
 
 function openChequeStatusModal(c) {
@@ -990,6 +1091,8 @@ function renderIssuedDrawer(c) {
       ${canCheckLog ? `<button class="btn btn-sm" data-action="checklog">Flag for check</button>` : ''}
       ${openCheckLog ? `<button class="btn btn-sm" data-action="resolve-checklog" data-log-id="${openCheckLog.id}">Resolve check</button>` : ''}
       ${canReplace ? `<button class="btn btn-sm" data-action="replace">Issue replacement</button>` : ''}
+      <button class="btn btn-sm" data-action="edit">Edit details</button>
+      <button class="btn btn-sm btn-danger" data-action="delete">Delete cheque</button>
     </div>
 
     <div class="section-title">Follow-ups</div>
@@ -1040,8 +1143,74 @@ function wireIssuedActions(c) {
       if (action === 'checklog') openIssuedCheckLogModal(c);
       if (action === 'resolve-checklog') openIssuedResolveCheckLogModal(c, btn.dataset.logId);
       if (action === 'replace') openIssuedReplaceModal(c);
+      if (action === 'edit') openIssuedEditModal(c);
+      if (action === 'delete') deleteIssuedCheque(c);
     });
   });
+}
+
+function openIssuedEditModal(c) {
+  const body = `
+    <form id="form-edit-issued">
+      <div class="form-error"></div>
+      <div class="form-grid">
+        <div class="field">
+          <label>Amount *</label>
+          <input name="amount" type="number" step="0.01" min="0.01" required value="${escapeHtml(c.amount)}">
+        </div>
+        <div class="field">
+          <label>Issued by staff</label>
+          <select name="issuedById">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
+        </div>
+        <div class="field span-2">
+          <label>Purpose</label>
+          <textarea name="purpose">${escapeHtml(c.purpose || '')}</textarea>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" id="cancel-edit-issued">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save changes</button>
+      </div>
+    </form>`;
+  openModal(`Edit issued cheque — ${escapeHtml(c.chqNo)}`, body, {
+    onMount: () => {
+      const form = document.getElementById('form-edit-issued');
+      form.querySelector('[name="issuedById"]').value = c.issuedById || '';
+      document.getElementById('cancel-edit-issued').addEventListener('click', closeModal);
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        clearFormError(form);
+        const data = Object.fromEntries(new FormData(form).entries());
+        try {
+          await api(`/issued-cheques/${c.id}`, { method: 'PATCH', body: JSON.stringify(data) });
+          toast('Issued cheque updated', 'success');
+          closeModal();
+          openIssuedDetail(c.id);
+          loadIssued();
+          loadDashboard();
+        } catch (err) {
+          formError(form, err.message);
+        }
+      });
+    },
+  });
+}
+
+async function deleteIssuedCheque(c) {
+  const ok = await openConfirmModal(
+    'Delete issued cheque?',
+    `This removes cheque ${escapeHtml(c.chqNo)} from active lists. Its history is kept, not erased.`,
+  );
+  if (!ok) return;
+  try {
+    await api(`/issued-cheques/${c.id}`, { method: 'DELETE' });
+    toast('Issued cheque deleted', 'success');
+    closeDrawer();
+    loadIssued();
+    loadDashboard();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
 }
 
 async function stopIssuedCheque(c) {
@@ -1372,9 +1541,11 @@ function openIssuedReplaceModal(c) {
 async function loadParties() {
   const search = document.getElementById('party-search').value;
   const type = document.getElementById('party-type-filter').value;
+  const showDeleted = document.getElementById('party-show-deleted').checked;
   const params = new URLSearchParams();
   if (search) params.set('search', search);
   if (type) params.set('type', type);
+  if (showDeleted) params.set('includeDeleted', 'true');
   try {
     const parties = await api(`/parties?${params.toString()}`);
     renderPartiesTable(parties);
@@ -1391,23 +1562,131 @@ function renderPartiesTable(parties) {
   }
   el.innerHTML = `
     <table class="ledger">
-      <thead><tr><th>Name</th><th>Type</th><th>Phone</th><th>Firm</th><th>PAN</th><th>Cheques</th></tr></thead>
+      <thead><tr><th>Name</th><th>Type</th><th>Phone</th><th>Firm</th><th>PAN</th><th>Cheques</th><th></th></tr></thead>
       <tbody>
         ${parties.map((p) => `
-          <tr>
-            <td>${escapeHtml(p.name)}</td>
+          <tr class="${p.deletedAt ? 'row-deleted' : ''}" data-id="${p.id}">
+            <td>${escapeHtml(p.name)}${p.deletedAt ? '<span class="tag-deleted">Deleted</span>' : ''}</td>
             <td>${humanize(p.type)}</td>
             <td class="num">${escapeHtml(p.phone || '—')}</td>
             <td>${escapeHtml(p.firm?.name || '—')}</td>
             <td class="num">${escapeHtml(p.panNo || '—')}</td>
             <td class="num">${(p._count?.cheques || 0) + (p._count?.paidCheques || 0)}</td>
+            <td class="row-actions">
+              <div class="row-actions-group">
+                ${p.deletedAt
+                  ? `<button class="btn btn-sm" data-action="restore">Restore</button>`
+                  : `<button class="btn btn-sm" data-action="edit">Edit</button>
+                     <button class="btn btn-sm btn-danger" data-action="delete">Delete</button>`}
+              </div>
+            </td>
           </tr>`).join('')}
       </tbody>
     </table>`;
+  el.querySelectorAll('tr[data-id]').forEach((row) => {
+    const party = parties.find((p) => p.id === row.dataset.id);
+    row.querySelectorAll('[data-action]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const action = btn.dataset.action;
+        if (action === 'edit') openEditPartyModal(party);
+        if (action === 'delete') deleteParty(party);
+        if (action === 'restore') restoreParty(party);
+      });
+    });
+  });
 }
 
 document.getElementById('party-search').addEventListener('input', debounce(loadParties, 300));
 document.getElementById('party-type-filter').addEventListener('change', loadParties);
+document.getElementById('party-show-deleted').addEventListener('change', loadParties);
+
+function openEditPartyModal(party) {
+  const body = `
+    <form id="form-edit-party">
+      <div class="form-error"></div>
+      <div class="form-grid">
+        <div class="field">
+          <label>Type</label>
+          <input type="text" value="${humanize(party.type)}" disabled>
+        </div>
+        <div class="field">
+          <label>Name *</label>
+          <input name="name" type="text" required value="${escapeHtml(party.name)}">
+        </div>
+        <div class="field">
+          <label>Phone</label>
+          <input name="phone" type="text" value="${escapeHtml(party.phone || '')}">
+        </div>
+        <div class="field">
+          <label>PAN no.</label>
+          <input name="panNo" type="text" value="${escapeHtml(party.panNo || '')}">
+        </div>
+        <div class="field span-2">
+          <label>Affiliated firm (if individual)</label>
+          <select name="firmId" ${party.type === 'FIRM' ? 'disabled' : ''}>${selectOptions(state.parties.filter((p) => p.type === 'FIRM' && p.id !== party.id), 'id', (f) => f.name, 'None')}</select>
+        </div>
+        <div class="field span-2">
+          <label>Address</label>
+          <textarea name="address">${escapeHtml(party.address || '')}</textarea>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" id="cancel-edit-party">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save changes</button>
+      </div>
+    </form>`;
+  openModal(`Edit party — ${escapeHtml(party.name)}`, body, {
+    onMount: () => {
+      const form = document.getElementById('form-edit-party');
+      form.querySelector('[name="firmId"]').value = party.firmId || '';
+      document.getElementById('cancel-edit-party').addEventListener('click', closeModal);
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        clearFormError(form);
+        const data = Object.fromEntries(new FormData(form).entries());
+        if (party.type === 'FIRM') delete data.firmId;
+        if (!data.firmId) delete data.firmId;
+        try {
+          await api(`/parties/${party.id}`, { method: 'PATCH', body: JSON.stringify(data) });
+          toast('Party updated', 'success');
+          closeModal();
+          await loadReferenceData();
+          loadParties();
+        } catch (err) {
+          formError(form, err.message);
+        }
+      });
+    },
+  });
+}
+
+async function deleteParty(party) {
+  const ok = await openConfirmModal(
+    'Delete party?',
+    `${escapeHtml(party.name)} will be hidden from new cheques, but existing history is kept and it can be restored later.`,
+  );
+  if (!ok) return;
+  try {
+    await api(`/parties/${party.id}`, { method: 'DELETE' });
+    toast('Party deleted', 'success');
+    await loadReferenceData();
+    loadParties();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+async function restoreParty(party) {
+  try {
+    await api(`/parties/${party.id}/restore`, { method: 'POST' });
+    toast('Party restored', 'success');
+    await loadReferenceData();
+    loadParties();
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
 
 document.getElementById('btn-new-party').addEventListener('click', () => {
   const body = `
@@ -1480,17 +1759,91 @@ async function loadBanks() {
     }
     el.innerHTML = `
       <table class="ledger">
-        <thead><tr><th>Bank</th><th>Branch</th><th>Received cheques</th><th>Our accounts</th></tr></thead>
+        <thead><tr><th>Bank</th><th>Branch</th><th>Received cheques</th><th>Our accounts</th><th></th></tr></thead>
         <tbody>
           ${banks.map((b) => `
-            <tr>
+            <tr data-id="${b.id}">
               <td>${escapeHtml(b.name)}</td>
               <td>${escapeHtml(b.branch || '—')}</td>
               <td class="num">${(b._count?.draweeCheques || 0)}</td>
               <td class="num">${(b._count?.companyAccounts || 0)}</td>
+              <td class="row-actions">
+                <div class="row-actions-group">
+                  <button class="btn btn-sm" data-action="edit">Edit</button>
+                  <button class="btn btn-sm btn-danger" data-action="delete">Delete</button>
+                </div>
+              </td>
             </tr>`).join('')}
         </tbody>
       </table>`;
+    el.querySelectorAll('tr[data-id]').forEach((row) => {
+      const bank = banks.find((b) => b.id === row.dataset.id);
+      row.querySelectorAll('[data-action]').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const action = btn.dataset.action;
+          if (action === 'edit') openEditBankModal(bank);
+          if (action === 'delete') deleteBank(bank);
+        });
+      });
+    });
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+function openEditBankModal(bank) {
+  const body = `
+    <form id="form-edit-bank">
+      <div class="form-error"></div>
+      <div class="form-grid">
+        <div class="field span-2">
+          <label>Bank name *</label>
+          <input name="name" type="text" required value="${escapeHtml(bank.name)}">
+        </div>
+        <div class="field span-2">
+          <label>Branch</label>
+          <input name="branch" type="text" value="${escapeHtml(bank.branch || '')}">
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" id="cancel-edit-bank">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save changes</button>
+      </div>
+    </form>`;
+  openModal(`Edit bank — ${escapeHtml(bank.name)}`, body, {
+    onMount: () => {
+      const form = document.getElementById('form-edit-bank');
+      document.getElementById('cancel-edit-bank').addEventListener('click', closeModal);
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        clearFormError(form);
+        const data = Object.fromEntries(new FormData(form).entries());
+        try {
+          await api(`/banks/${bank.id}`, { method: 'PATCH', body: JSON.stringify(data) });
+          toast('Bank updated', 'success');
+          closeModal();
+          await loadReferenceData();
+          loadBanks();
+        } catch (err) {
+          formError(form, err.message);
+        }
+      });
+    },
+  });
+}
+
+async function deleteBank(bank) {
+  const ok = await openConfirmModal(
+    'Delete bank?',
+    `${escapeHtml(bank.name)} will be permanently removed. This only works if no cheques or accounts reference it.`,
+  );
+  if (!ok) return;
+  try {
+    await api(`/banks/${bank.id}`, { method: 'DELETE' });
+    toast('Bank deleted', 'success');
+    await loadReferenceData();
+    loadBanks();
   } catch (err) {
     toast(err.message, 'error');
   }
@@ -1550,18 +1903,101 @@ async function loadAccounts() {
     }
     el.innerHTML = `
       <table class="ledger">
-        <thead><tr><th>Account name</th><th>Bank</th><th>Account no.</th><th>Branch</th><th>Issued cheques</th></tr></thead>
+        <thead><tr><th>Account name</th><th>Bank</th><th>Account no.</th><th>Branch</th><th>Issued cheques</th><th></th></tr></thead>
         <tbody>
           ${accounts.map((a) => `
-            <tr>
+            <tr data-id="${a.id}">
               <td>${escapeHtml(a.accountName)}</td>
               <td>${escapeHtml(a.bank?.name || '—')}</td>
               <td class="num">${escapeHtml(a.accountNumber)}</td>
               <td>${escapeHtml(a.branch || '—')}</td>
               <td class="num">${(a._count?.issuedCheques || 0)}</td>
+              <td class="row-actions">
+                <div class="row-actions-group">
+                  <button class="btn btn-sm" data-action="edit">Edit</button>
+                  <button class="btn btn-sm btn-danger" data-action="delete">Delete</button>
+                </div>
+              </td>
             </tr>`).join('')}
         </tbody>
       </table>`;
+    el.querySelectorAll('tr[data-id]').forEach((row) => {
+      const account = accounts.find((a) => a.id === row.dataset.id);
+      row.querySelectorAll('[data-action]').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const action = btn.dataset.action;
+          if (action === 'edit') openEditAccountModal(account);
+          if (action === 'delete') deleteAccount(account);
+        });
+      });
+    });
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+function openEditAccountModal(account) {
+  const body = `
+    <form id="form-edit-account">
+      <div class="form-error"></div>
+      <div class="form-grid">
+        <div class="field span-2">
+          <label>Bank *</label>
+          <select name="bankId" required>${selectOptions(state.banks, 'id', (b) => b.name, 'Select bank…')}</select>
+        </div>
+        <div class="field span-2">
+          <label>Account name *</label>
+          <input name="accountName" type="text" required value="${escapeHtml(account.accountName)}">
+        </div>
+        <div class="field">
+          <label>Account number *</label>
+          <input name="accountNumber" type="text" required value="${escapeHtml(account.accountNumber)}">
+        </div>
+        <div class="field">
+          <label>Branch</label>
+          <input name="branch" type="text" value="${escapeHtml(account.branch || '')}">
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" id="cancel-edit-account">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save changes</button>
+      </div>
+    </form>`;
+  openModal(`Edit account — ${escapeHtml(account.accountName)}`, body, {
+    onMount: () => {
+      const form = document.getElementById('form-edit-account');
+      form.querySelector('[name="bankId"]').value = account.bankId || '';
+      document.getElementById('cancel-edit-account').addEventListener('click', closeModal);
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        clearFormError(form);
+        const data = Object.fromEntries(new FormData(form).entries());
+        try {
+          await api(`/company-bank-accounts/${account.id}`, { method: 'PATCH', body: JSON.stringify(data) });
+          toast('Account updated', 'success');
+          closeModal();
+          await loadReferenceData();
+          loadAccounts();
+        } catch (err) {
+          formError(form, err.message);
+        }
+      });
+    },
+  });
+}
+
+async function deleteAccount(account) {
+  const ok = await openConfirmModal(
+    'Delete account?',
+    `${escapeHtml(account.accountName)} will be permanently removed. This only works if no issued cheques reference it.`,
+  );
+  if (!ok) return;
+  try {
+    await api(`/company-bank-accounts/${account.id}`, { method: 'DELETE' });
+    toast('Account deleted', 'success');
+    await loadReferenceData();
+    loadAccounts();
   } catch (err) {
     toast(err.message, 'error');
   }
@@ -1629,11 +2065,89 @@ async function loadStaff() {
     }
     el.innerHTML = `
       <table class="ledger">
-        <thead><tr><th>Name</th><th>Phone</th></tr></thead>
+        <thead><tr><th>Name</th><th>Phone</th><th></th></tr></thead>
         <tbody>
-          ${staff.map((s) => `<tr><td>${escapeHtml(s.name)}</td><td class="num">${escapeHtml(s.phone || '—')}</td></tr>`).join('')}
+          ${staff.map((s) => `
+            <tr data-id="${s.id}">
+              <td>${escapeHtml(s.name)}</td>
+              <td class="num">${escapeHtml(s.phone || '—')}</td>
+              <td class="row-actions">
+                <div class="row-actions-group">
+                  <button class="btn btn-sm" data-action="edit">Edit</button>
+                  <button class="btn btn-sm btn-danger" data-action="delete">Delete</button>
+                </div>
+              </td>
+            </tr>`).join('')}
         </tbody>
       </table>`;
+    el.querySelectorAll('tr[data-id]').forEach((row) => {
+      const member = staff.find((s) => s.id === row.dataset.id);
+      row.querySelectorAll('[data-action]').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const action = btn.dataset.action;
+          if (action === 'edit') openEditStaffModal(member);
+          if (action === 'delete') deleteStaff(member);
+        });
+      });
+    });
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+function openEditStaffModal(member) {
+  const body = `
+    <form id="form-edit-staff">
+      <div class="form-error"></div>
+      <div class="form-grid">
+        <div class="field span-2">
+          <label>Name *</label>
+          <input name="name" type="text" required value="${escapeHtml(member.name)}">
+        </div>
+        <div class="field span-2">
+          <label>Phone</label>
+          <input name="phone" type="text" value="${escapeHtml(member.phone || '')}">
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" id="cancel-edit-staff">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save changes</button>
+      </div>
+    </form>`;
+  openModal(`Edit staff — ${escapeHtml(member.name)}`, body, {
+    onMount: () => {
+      const form = document.getElementById('form-edit-staff');
+      document.getElementById('cancel-edit-staff').addEventListener('click', closeModal);
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        clearFormError(form);
+        const data = Object.fromEntries(new FormData(form).entries());
+        try {
+          await api(`/staff/${member.id}`, { method: 'PATCH', body: JSON.stringify(data) });
+          toast('Staff updated', 'success');
+          closeModal();
+          await loadReferenceData();
+          loadStaff();
+        } catch (err) {
+          formError(form, err.message);
+        }
+      });
+    },
+  });
+}
+
+async function deleteStaff(member) {
+  const ok = await openConfirmModal(
+    'Delete staff member?',
+    `${escapeHtml(member.name)} will be permanently removed. This only works if no cheques reference them.`,
+  );
+  if (!ok) return;
+  try {
+    await api(`/staff/${member.id}`, { method: 'DELETE' });
+    toast('Staff deleted', 'success');
+    await loadReferenceData();
+    loadStaff();
   } catch (err) {
     toast(err.message, 'error');
   }
@@ -1693,19 +2207,74 @@ async function loadReceipts() {
     }
     el.innerHTML = `
       <table class="ledger">
-        <thead><tr><th>Fiscal year</th><th>Receipt no.</th><th>Cheques</th></tr></thead>
+        <thead><tr><th>Fiscal year</th><th>Receipt no.</th><th>Cheques</th><th></th></tr></thead>
         <tbody>
           ${receipts.map((r) => `
-            <tr>
+            <tr data-id="${r.id}">
               <td class="num">${escapeHtml(r.fiscalYear)}</td>
               <td class="num">${escapeHtml(r.receiptNo || '—')}</td>
               <td class="num">${(r._count?.cheques || 0)}</td>
+              <td class="row-actions">
+                <div class="row-actions-group">
+                  <button class="btn btn-sm" data-action="edit">Edit</button>
+                </div>
+              </td>
             </tr>`).join('')}
         </tbody>
       </table>`;
+    el.querySelectorAll('tr[data-id]').forEach((row) => {
+      const receipt = receipts.find((r) => r.id === row.dataset.id);
+      row.querySelectorAll('[data-action]').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (btn.dataset.action === 'edit') openEditReceiptModal(receipt);
+        });
+      });
+    });
   } catch (err) {
     toast(err.message, 'error');
   }
+}
+
+function openEditReceiptModal(receipt) {
+  const body = `
+    <form id="form-edit-receipt">
+      <div class="form-error"></div>
+      <div class="form-grid">
+        <div class="field">
+          <label>Fiscal year *</label>
+          <input name="fiscalYear" type="text" required value="${escapeHtml(receipt.fiscalYear)}">
+        </div>
+        <div class="field">
+          <label>Receipt no.</label>
+          <input name="receiptNo" type="text" value="${escapeHtml(receipt.receiptNo || '')}">
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-ghost" id="cancel-edit-receipt">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save changes</button>
+      </div>
+    </form>`;
+  openModal(`Edit receipt — ${escapeHtml(receipt.fiscalYear)}`, body, {
+    onMount: () => {
+      const form = document.getElementById('form-edit-receipt');
+      document.getElementById('cancel-edit-receipt').addEventListener('click', closeModal);
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        clearFormError(form);
+        const data = Object.fromEntries(new FormData(form).entries());
+        try {
+          await api(`/receipts/${receipt.id}`, { method: 'PATCH', body: JSON.stringify(data) });
+          toast('Receipt updated', 'success');
+          closeModal();
+          await loadReferenceData();
+          loadReceipts();
+        } catch (err) {
+          formError(form, err.message);
+        }
+      });
+    },
+  });
 }
 
 document.getElementById('btn-new-receipt').addEventListener('click', () => {
