@@ -1,0 +1,13 @@
+// ============================================================================
+// Constants
+// ============================================================================
+export const API = '/api';
+
+export const RECEIVED_STATUSES = ['PENDING', 'FOLLOWUP', 'ON_CHECK', 'PRESENTED', 'CLEARED', 'RETURNED'];
+export const ISSUED_STATUSES = ['ISSUED', 'FOLLOWUP', 'ON_CHECK', 'PRESENTED', 'CLEARED', 'RETURNED', 'STOPPED'];
+export const FOLLOWUP_RESPONSES = ['CONFIRMED', 'REQUESTED_DELAY', 'REQUESTED_REPLACEMENT', 'REQUESTED_PARTIAL_PAYMENT', 'REQUESTED_RETURN', 'UNREACHABLE', 'OTHER'];
+export const ISSUED_FOLLOWUP_RESPONSES = ['WILL_REPRESENT', 'REQUESTED_REPLACEMENT', 'REQUESTED_PARTIAL_PAYMENT', 'DISPUTE', 'UNREACHABLE', 'OTHER'];
+export const RETURN_REASONS = ['INSUFFICIENT_FUNDS', 'SIGNATURE_MISMATCH', 'ACCOUNT_CLOSED', 'STOPPED_BY_ISSUER', 'DATE_ISSUE', 'OTHER'];
+export const PAYMENT_METHODS = ['CASH', 'IPS', 'CIPS', 'QR', 'BANK_DEPOSIT', 'OTHER'];
+export const CLEARANCE_METHODS = ['PRESENTMENT', 'PARTIAL_RECOVERY'];
+export const PARTY_TYPES = ['FIRM', 'INDIVIDUAL'];
