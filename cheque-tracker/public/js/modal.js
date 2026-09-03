@@ -2,6 +2,7 @@
 // Modal
 // ============================================================================
 import { initBsDatePickers } from './bsDatePicker.js';
+import { initAutocomplete } from './autocomplete.js';
 
 export function openModal(titleHtml, bodyHtml, { onMount } = {}) {
   const content = document.getElementById('modal-content');
@@ -16,6 +17,7 @@ export function openModal(titleHtml, bodyHtml, { onMount } = {}) {
   document.getElementById('modal-backdrop').classList.add('open');
   document.getElementById('modal-close-btn').addEventListener('click', closeModal);
   initBsDatePickers(content);
+  initAutocomplete(content); // must run after the BS pickers above so date suggestion chips have somewhere to attach
   if (onMount) onMount();
 }
 

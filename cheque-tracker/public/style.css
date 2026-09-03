@@ -83,6 +83,48 @@ button { font-family: var(--font-body); }
 .bs-date-hint { flex: 1 1 100%; color: var(--ink-soft); font-size: 0.78rem; white-space: nowrap; }
 
 /* ==========================================================================
+   Autocomplete — inline ghost-text suggestions (autocomplete.js)
+   ========================================================================== */
+/* The real field sits on top (background: transparent, set inline by
+   autocomplete.js) of this box, which supplies the fill/border look and, in
+   the untyped region past the cursor, the greyed-out suggestion text. The
+   .ac-ghost-typed span exists purely to push .ac-ghost-suggest into the
+   right horizontal position — it mirrors what's been typed so far but stays
+   invisible, since the real field already renders that part itself. */
+.ac-wrap { position: relative; display: inline-block; vertical-align: top; max-width: 100%; }
+.ac-ghost {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  pointer-events: none;
+  border: 1px solid transparent;
+  background: var(--surface-raise);
+  white-space: pre;
+}
+.ac-ghost-multiline { align-items: flex-start; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ac-ghost-typed { color: transparent; }
+.ac-ghost-suggest { color: var(--ink-faint); }
+.ac-wrap input, .ac-wrap textarea { position: relative; z-index: 1; }
+
+.ac-date-suggest {
+  flex: 0 0 auto;
+  border: none;
+  background: none;
+  padding: 0;
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  color: var(--ink-faint);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.ac-date-suggest:hover, .ac-date-suggest:focus-visible { color: var(--brand); }
+.ac-date-suggest[hidden] { display: none; }
+
+/* ==========================================================================
    Masthead
    ========================================================================== */
 .masthead {

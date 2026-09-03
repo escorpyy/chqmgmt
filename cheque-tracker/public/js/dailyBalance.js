@@ -2,6 +2,7 @@ import { api } from './api.js';
 import { toast } from './toast.js';
 import { escapeHtml, fmtMoney } from './utils.js';
 import { syncBsDatePicker } from './bsDatePicker.js';
+import { initAutocomplete } from './autocomplete.js';
 import { API } from './constants.js';
 
 // ============================================================================
@@ -82,6 +83,8 @@ function renderDailyBalanceTable(rows, totals) {
     </table>
     ${totals.allSet ? '' : '<p class="hint">Some accounts are missing today\'s opening balance — their available figure and the total won\'t be accurate until it\'s entered.</p>'}
   `;
+
+  initAutocomplete(el); // these balance inputs render outside any modal/drawer, so they need their own call
 
   el.querySelectorAll('.db-input').forEach((input) => {
     input.addEventListener('change', async () => {
