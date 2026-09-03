@@ -8,6 +8,7 @@ import { loadDashboard } from './dashboard.js';
 import { toast } from './toast.js';
 import { closeModal } from './modal.js';
 import { closeDrawer } from './drawer.js';
+import { initBsDatePickers } from './bsDatePicker.js';
 
 // ============================================================================
 // Global keyboard shortcuts
@@ -23,6 +24,7 @@ document.addEventListener('keydown', (e) => {
 // Boot
 // ============================================================================
 (async function init() {
+  initBsDatePickers(document); // e.g. the daily-balance date picker, present at load
   await checkHealth();
   try {
     await loadReferenceData();
