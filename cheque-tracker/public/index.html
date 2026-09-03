@@ -28,6 +28,7 @@
   <button class="tab" data-tab="received">Received</button>
   <button class="tab" data-tab="issued">Issued</button>
   <button class="tab" data-tab="daily-balance">Daily Balance</button>
+  <button class="tab" data-tab="importexport">Import / Export</button>
   <button class="tab" data-tab="parties">Parties</button>
   <button class="tab" data-tab="banks">Banks</button>
   <button class="tab" data-tab="accounts">Our accounts</button>
@@ -117,6 +118,23 @@
       outstanding, however old, so you know what has to stay covered for it not to bounce.
     </p>
     <div id="daily-balance-table"></div>
+  </section>
+
+  <!-- IMPORT / EXPORT -->
+  <section class="panel" id="panel-importexport">
+    <div class="panel-head">
+      <h2>Import / Export</h2>
+    </div>
+    <p class="hint">
+      Bring data in from a spreadsheet, or export any table to Excel. Download the sample file first to see the
+      exact column headers expected. <strong>Append</strong> adds the file's rows on top of what's already there.
+      <strong>Delete existing, then import</strong> permanently clears the table first — use it to reload cleaned-up
+      source data, and note it will fail if other tables still reference the rows being cleared (e.g. a bank used by
+      existing cheques).
+    </p>
+    <div id="importexport-list" class="ie-grid">
+      <p class="hint">Loading tables…</p>
+    </div>
   </section>
 
   <!-- PARTIES -->

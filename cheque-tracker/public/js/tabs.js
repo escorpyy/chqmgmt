@@ -2,6 +2,7 @@ import { loadDashboard } from './dashboard.js';
 import { loadReceived } from './received.js';
 import { loadIssued } from './issued.js';
 import { loadDailyBalance } from './dailyBalance.js';
+import { loadImportExport } from './importExport.js';
 import { loadParties } from './parties.js';
 import { loadBanks } from './banks.js';
 import { loadAccounts } from './accounts.js';
@@ -16,6 +17,7 @@ const TAB_LOADERS = {
   received: loadReceived,
   issued: loadIssued,
   'daily-balance': loadDailyBalance,
+  importexport: loadImportExport,
   parties: loadParties,
   banks: loadBanks,
   accounts: loadAccounts,

@@ -15,6 +15,7 @@ import chequesRouter from './routes/cheques.js';
 import issuedChequesRouter from './routes/issuedCheques.js';
 import dashboardRouter from './routes/dashboard.js';
 import dailyBalanceRouter from './routes/dailyBalance.js';
+import importExportRouter from './routes/importExport.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -32,6 +33,7 @@ app.use('/api/cheques', chequesRouter);
 app.use('/api/issued-cheques', issuedChequesRouter);
 app.use('/api/dashboard', dashboardRouter);
 app.use('/api/daily-balance', dailyBalanceRouter);
+app.use('/api/import-export', importExportRouter);
 
 app.get('/api/health', async (req, res) => {
   try {
@@ -52,6 +54,14 @@ app.get('*', (req, res, next) => {
 // ---- Error handling ---------------------------------------------------
 app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
   console.error(err);
+
+  // multer file-size / upload errors carry their own status.
+  if (err.name === 'MulterError') {
+    return res.status(400).json({ error: `Upload error: ${err.message}` });
+  }
+  if (err.status) {
+    return res.status(err.status).json({ error: err.message });
+  }
 
   if (err instanceof Prisma.PrismaClientKnownRequestError) {
     if (err.code === 'P2002') {
