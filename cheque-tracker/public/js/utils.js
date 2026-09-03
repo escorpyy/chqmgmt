@@ -1,6 +1,8 @@
 // ============================================================================
 // Small utilities
 // ============================================================================
+import { formatBsLong } from './nepaliDate.js';
+
 export function humanize(value) {
   if (!value) return '—';
   return value.toString().toLowerCase().replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
@@ -18,10 +20,31 @@ export function fmtMoney(value) {
   return n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// This is a Nepal-based app: BS (Bikram Sambat) is the date system staff
+// think in day to day, so it leads. AD stays visible in brackets purely as
+// a cross-reference (e.g. for bank statements, which are AD-dated) — but
+// every internal calculation (sorting, "days outstanding", storage) still
+// runs on the underlying AD value; only the display is BS-first.
 export function fmtDate(value) {
+  if (!value) return '—';
+  const bs = formatBsLong(value);
+  const d = new Date(value);
+  const ad = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  return bs ? `${bs} BS (${ad})` : ad;
+}
+
+// AD-only date, for places where the BS prefix would be too noisy (e.g. dense tables).
+export function fmtDateAdOnly(value) {
   if (!value) return '—';
   const d = new Date(value);
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+// BS-only date string, e.g. for compact chips where the AD form isn't needed.
+export function fmtBsDate(value) {
+  if (!value) return '—';
+  const bs = formatBsLong(value);
+  return bs ? `${bs} BS` : '—';
 }
 
 export function fmtDateInput(value) {

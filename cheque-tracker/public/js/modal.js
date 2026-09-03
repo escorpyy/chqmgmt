@@ -1,8 +1,11 @@
 // ============================================================================
 // Modal
 // ============================================================================
+import { initBsDatePickers } from './bsDatePicker.js';
+
 export function openModal(titleHtml, bodyHtml, { onMount } = {}) {
-  document.getElementById('modal-content').innerHTML = `
+  const content = document.getElementById('modal-content');
+  content.innerHTML = `
     <div class="modal-header">
       <h2>${titleHtml}</h2>
       <button class="modal-close" id="modal-close-btn" aria-label="Close">×</button>
@@ -12,6 +15,7 @@ export function openModal(titleHtml, bodyHtml, { onMount } = {}) {
   document.getElementById('modal').classList.add('open');
   document.getElementById('modal-backdrop').classList.add('open');
   document.getElementById('modal-close-btn').addEventListener('click', closeModal);
+  initBsDatePickers(content);
   if (onMount) onMount();
 }
 

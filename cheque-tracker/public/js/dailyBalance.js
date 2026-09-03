@@ -1,6 +1,7 @@
 import { api } from './api.js';
 import { toast } from './toast.js';
 import { escapeHtml, fmtMoney } from './utils.js';
+import { syncBsDatePicker } from './bsDatePicker.js';
 import { API } from './constants.js';
 
 // ============================================================================
@@ -8,7 +9,12 @@ import { API } from './constants.js';
 // ============================================================================
 function dbSelectedDate() {
   const picker = document.getElementById('db-date-picker');
-  if (!picker.value) picker.value = new Date().toISOString().slice(0, 10);
+  if (!picker.value) {
+    picker.value = new Date().toISOString().slice(0, 10);
+    // Setting .value directly doesn't fire 'change', so nudge the BS picker
+    // (wired in main.js on boot) to pick up today's default.
+    syncBsDatePicker(picker);
+  }
   return picker.value;
 }
 

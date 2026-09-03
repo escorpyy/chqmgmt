@@ -55,6 +55,33 @@ button { font-family: var(--font-body); }
 
 .hint { color: var(--ink-soft); font-size: 0.88rem; margin: 0.25rem 0 1rem; }
 
+/* Native <input type="date"> stays in the DOM as the real form control (so
+   FormData submission and HTML5 "required" validation keep working) but is
+   visually replaced by the BS picker in .bs-date-field right after it. This
+   is the standard "visually hidden but still focusable" pattern — not
+   display:none / visibility:hidden, which would remove it from constraint
+   validation entirely. */
+.bs-native-date {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.field { position: relative; }
+
+.bs-date-field { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; }
+.bs-date-select { min-width: 0; flex: 1 1 auto; }
+.bs-date-select.bs-date-year { flex-basis: 5.5rem; }
+.bs-date-select.bs-date-month { flex-basis: 7rem; }
+.bs-date-select.bs-date-day { flex-basis: 4rem; }
+.bs-date-today { flex: 0 0 auto; }
+.bs-date-hint { flex: 1 1 100%; color: var(--ink-soft); font-size: 0.78rem; white-space: nowrap; }
+
 /* ==========================================================================
    Masthead
    ========================================================================== */
@@ -246,7 +273,7 @@ td.row-actions {
   white-space: nowrap;
   cursor: default;
 }
-.row-actions-group { display: inline-flex; gap: 0.4rem; }
+.row-actions-group { display: inline-flex; align-items: center; gap: 0.4rem; position: relative; }
 
 /* Status tag */
 .status-tag {
