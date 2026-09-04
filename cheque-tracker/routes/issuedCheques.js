@@ -93,8 +93,18 @@ router.post('/', asyncHandler(async (req, res) => {
   res.status(201).json(cheque);
 }));
 
+// PATCH /api/issued-cheques/:id  (edit cheque details)
+//
+// Two tiers, same pattern as the received-cheque side: purpose, issuedById,
+// amount are freely editable; chqDate, chqNo, companyBankAccountId, payeeType
+// are "risky" — they feed the @@unique([companyBankAccountId, chqNo])
+// constraint and/or totalDays, so the frontend warns/confirms before
+// sending them, and this route re-validates regardless.
 router.patch('/:id', asyncHandler(async (req, res) => {
-  const { purpose, issuedById, amount } = req.body;
+  const {
+    purpose, issuedById, amount,
+    chqDate, chqNo, companyBankAccountId, payeeType,
+  } = req.body;
 
   const existing = await prisma.issuedCheque.findFirst({
     where: { id: req.params.id, deletedAt: null },
@@ -114,12 +124,34 @@ router.patch('/:id', asyncHandler(async (req, res) => {
     }
   }
 
+  let parsedChqDate;
+  let totalDays;
+  if (chqDate !== undefined) {
+    parsedChqDate = parseDateOrNull(chqDate);
+    if (!parsedChqDate) return res.status(400).json({ error: 'chqDate is not a valid date' });
+    if (parsedChqDate > existing.statusDate) {
+      return res.status(400).json({
+        error: 'chqDate cannot be after the cheque\'s current status date — update the status date first, or pick an earlier chqDate',
+      });
+    }
+    totalDays = computeTotalDays(parsedChqDate, existing.statusDate);
+  }
+
+  if (payeeType !== undefined && !isValidEnum(payeeType, PARTY_TYPES)) {
+    return res.status(400).json({ error: `payeeType must be one of: ${PARTY_TYPES.join(', ')}` });
+  }
+
   const cheque = await prisma.issuedCheque.update({
     where: { id: req.params.id },
     data: {
       ...(purpose !== undefined ? { purpose } : {}),
       ...(issuedById !== undefined ? { issuedById: issuedById || null } : {}),
       ...(amount !== undefined ? { amount } : {}),
+      // -- risky fields --
+      ...(chqDate !== undefined ? { chqDate: parsedChqDate, totalDays } : {}),
+      ...(chqNo !== undefined ? { chqNo } : {}),
+      ...(companyBankAccountId !== undefined ? { companyBankAccountId } : {}),
+      ...(payeeType !== undefined ? { payeeType, chequeType: deriveChequeType(payeeType) } : {}),
     },
     include: issuedInclude,
   });

@@ -162,21 +162,19 @@ export const TABLES = {
     async deleteAll() { await prisma.companyBankAccount.deleteMany(); },
   },
 
-  receipts: {
-    label: 'Receipts',
-    columns: ['fiscalYear', 'receiptNo'],
-    sampleRows: [{ fiscalYear: '2082/83', receiptNo: 'UR-001' }],
+  fiscalYears: {
+    label: 'Fiscal years',
+    columns: ['year'],
+    sampleRows: [{ year: '2082/83' }],
     async export() {
-      const rows = await prisma.receipt.findMany({ orderBy: { createdAt: 'desc' } });
-      return rows.map((r) => ({ fiscalYear: r.fiscalYear, receiptNo: r.receiptNo || '' }));
+      const rows = await prisma.fiscalYear.findMany({ orderBy: { year: 'desc' } });
+      return rows.map((r) => ({ year: r.year }));
     },
     async importRow(row) {
-      const fiscalYear = required(row, 'fiscalYear');
-      return prisma.receipt.create({
-        data: { fiscalYear, receiptNo: row.receiptNo ? row.receiptNo.toString().trim() : null },
-      });
+      const year = required(row, 'year');
+      return prisma.fiscalYear.create({ data: { year } });
     },
-    async deleteAll() { await prisma.receipt.deleteMany(); },
+    async deleteAll() { await prisma.fiscalYear.deleteMany(); },
   },
 
   cheques: {
@@ -203,12 +201,12 @@ export const TABLES = {
     async export() {
       const rows = await prisma.cheque.findMany({
         where: { deletedAt: null },
-        include: { receipt: true, issuer: true, bank: true, presentedBank: true, staff: true },
+        include: { fiscalYear: true, issuer: true, bank: true, presentedBank: true, staff: true },
         orderBy: { chqDate: 'desc' },
       });
       return rows.map((c) => ({
-        fiscalYear: c.receipt?.fiscalYear || '',
-        receiptNo: c.receipt?.receiptNo || '',
+        fiscalYear: c.fiscalYear?.year || '',
+        receiptNo: c.receiptNo || '',
         refNo: c.refNo || '',
         issuerName: c.issuer?.name || '',
         issuedOn: c.issuedOn,
@@ -223,7 +221,7 @@ export const TABLES = {
       }));
     },
     async importRow(row) {
-      const fiscalYear = required(row, 'fiscalYear');
+      const fiscalYearText = required(row, 'fiscalYear');
       const issuerName = required(row, 'issuerName');
       const issuedOn = required(row, 'issuedOn');
       const issuedOnType = required(row, 'issuedOnType');
@@ -251,20 +249,17 @@ export const TABLES = {
         if (!staff) throw new Error(`staffName "${row.staffName}" was not found`);
       }
 
-      let receipt = await prisma.receipt.findFirst({
-        where: { fiscalYear, receiptNo: row.receiptNo ? row.receiptNo.toString().trim() : null },
-      });
-      if (!receipt) {
-        receipt = await prisma.receipt.create({
-          data: { fiscalYear, receiptNo: row.receiptNo ? row.receiptNo.toString().trim() : null },
-        });
+      let fiscalYear = await prisma.fiscalYear.findFirst({ where: { year: fiscalYearText } });
+      if (!fiscalYear) {
+        fiscalYear = await prisma.fiscalYear.create({ data: { year: fiscalYearText } });
       }
 
       const status = (row.status && isValidEnum(row.status, CHEQUE_STATUSES) && row.status) || 'PENDING';
 
       return prisma.cheque.create({
         data: {
-          receiptId: receipt.id,
+          fiscalYearId: fiscalYear.id,
+          receiptNo: row.receiptNo ? row.receiptNo.toString().trim() : null,
           refNo: row.refNo ? row.refNo.toString().trim() : null,
           issuerId: issuer.id,
           issuedOn,

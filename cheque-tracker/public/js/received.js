@@ -66,9 +66,13 @@ function openNewChequeModal() {
     <form id="form-new-cheque">
       <div class="form-error"></div>
       <div class="form-grid">
-        <div class="field span-2">
-          <label>Receipt *</label>
-          <select name="receiptId" required>${selectOptions(state.receipts, 'id', (r) => `${r.fiscalYear} — ${r.receiptNo || 'no receipt no.'}`, 'Select receipt…')}</select>
+        <div class="field">
+          <label>Fiscal year *</label>
+          <select name="fiscalYearId" required>${selectOptions(state.fiscalYears, 'id', (f) => f.year, 'Select fiscal year…')}</select>
+        </div>
+        <div class="field">
+          <label>Receipt no.</label>
+          <input name="receiptNo" type="text" placeholder="UR-001">
         </div>
         <div class="field">
           <label>Ref no</label>
@@ -168,7 +172,7 @@ function renderChequeDrawer(c) {
 
     <dl class="detail-grid">
       <div class="detail-field"><dt>Ref no</dt><dd>${escapeHtml(c.refNo || '—')}</dd></div>
-      <div class="detail-field"><dt>Receipt</dt><dd>${escapeHtml(c.receipt?.fiscalYear || '')} ${escapeHtml(c.receipt?.receiptNo || '')}</dd></div>
+      <div class="detail-field"><dt>Receipt</dt><dd>${escapeHtml(c.fiscalYear?.year || '')} ${escapeHtml(c.receiptNo || '')}</dd></div>
       <div class="detail-field"><dt>Amount</dt><dd>Rs ${fmtMoney(c.amount)}</dd></div>
       <div class="detail-field"><dt>Payee on cheque</dt><dd>${escapeHtml(c.issuedOn)} (${humanize(c.issuedOnType)})</dd></div>
       <div class="detail-field"><dt>Cheque type</dt><dd>${humanize(c.chequeType)}</dd></div>
@@ -252,6 +256,14 @@ function openChequeEditModal(c) {
       <div class="form-error"></div>
       <div class="form-grid">
         <div class="field">
+          <label>Fiscal year *</label>
+          <select name="fiscalYearId" required>${selectOptions(state.fiscalYears, 'id', (f) => f.year, 'Select fiscal year…')}</select>
+        </div>
+        <div class="field">
+          <label>Receipt no.</label>
+          <input name="receiptNo" type="text" value="${escapeHtml(c.receiptNo || '')}">
+        </div>
+        <div class="field">
           <label>Ref no</label>
           <input name="refNo" type="text" value="${escapeHtml(c.refNo || '')}">
         </div>
@@ -268,6 +280,28 @@ function openChequeEditModal(c) {
           <select name="staffId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
         </div>
       </div>
+
+      <div class="section-title" style="margin-top:1rem">Risky fields</div>
+      <p class="hint" style="margin-top:0">These affect the bank/cheque-no uniqueness check and the lifecycle day-count. You'll be asked to confirm if you change any of them.</p>
+      <div class="form-grid">
+        <div class="field">
+          <label>Cheque date *</label>
+          <input name="chqDate" type="date" required value="${fmtDateInput(c.chqDate)}">
+        </div>
+        <div class="field">
+          <label>Cheque no *</label>
+          <input name="chqNo" type="text" required value="${escapeHtml(c.chqNo)}">
+        </div>
+        <div class="field">
+          <label>Drawee bank *</label>
+          <select name="bankId" required>${selectOptions(state.banks, 'id', (b) => b.name, 'Select bank…')}</select>
+        </div>
+        <div class="field">
+          <label>Payee type *</label>
+          <select name="issuedOnType" required>${enumOptions(PARTY_TYPES)}</select>
+        </div>
+      </div>
+
       <div class="form-actions">
         <button type="button" class="btn btn-ghost" id="cancel-edit-cheque">Cancel</button>
         <button type="submit" class="btn btn-primary">Save changes</button>
@@ -276,15 +310,34 @@ function openChequeEditModal(c) {
   openModal(`Edit cheque — ${escapeHtml(c.chqNo)}`, body, {
     onMount: () => {
       const form = document.getElementById('form-edit-cheque');
+      form.querySelector('[name="fiscalYearId"]').value = c.fiscalYearId || '';
+      syncEditableSelect(form.querySelector('[name="fiscalYearId"]'));
       form.querySelector('[name="presentedBankId"]').value = c.presentedBankId || '';
       syncEditableSelect(form.querySelector('[name="presentedBankId"]'));
       form.querySelector('[name="staffId"]').value = c.staffId || '';
       syncEditableSelect(form.querySelector('[name="staffId"]'));
+      form.querySelector('[name="bankId"]').value = c.bankId;
+      syncEditableSelect(form.querySelector('[name="bankId"]'));
+      form.querySelector('[name="issuedOnType"]').value = c.issuedOnType;
       document.getElementById('cancel-edit-cheque').addEventListener('click', closeModal);
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         clearFormError(form);
         const data = Object.fromEntries(new FormData(form).entries());
+
+        const riskyChanged = data.chqDate !== fmtDateInput(c.chqDate)
+          || data.chqNo !== c.chqNo
+          || data.bankId !== c.bankId
+          || data.issuedOnType !== c.issuedOnType;
+        if (riskyChanged) {
+          const ok = await openConfirmModal(
+            'Change risky fields?',
+            'You\'re changing the cheque date, cheque no, drawee bank, or payee type. These affect the uniqueness check and the lifecycle day-count for this cheque. Continue?',
+            { confirmLabel: 'Save changes', danger: false },
+          );
+          if (!ok) return;
+        }
+
         try {
           await api(`/cheques/${c.id}`, { method: 'PATCH', body: JSON.stringify(data) });
           toast('Cheque updated', 'success');
@@ -325,6 +378,11 @@ function openChequeStatusModal(c) {
         <div class="field span-2">
           <label>New status *</label>
           <select name="status" id="status-select" required>${enumOptions(RECEIVED_STATUSES)}</select>
+        </div>
+        <div class="field span-2">
+          <label>Status date *</label>
+          <input name="statusDate" type="date" id="status-date-input" required value="${fmtDateInput(c.statusDate)}" min="${fmtDateInput(c.chqDate)}">
+          <span class="hint">Total lifecycle (status date − cheque date) is recalculated from this.</span>
         </div>
         <div class="field span-2" id="clearance-field" style="display:none">
           <label>Clearance method</label>
@@ -579,7 +637,7 @@ function openChequeReplaceModal(c) {
   const body = `
     <form id="form-replace">
       <div class="form-error"></div>
-      <p class="hint">Same receipt, issuer and payee carry over automatically.</p>
+      <p class="hint">Same fiscal year, receipt no., issuer and payee carry over automatically.</p>
       <div class="form-grid">
         <div class="field">
           <label>New cheque no *</label>

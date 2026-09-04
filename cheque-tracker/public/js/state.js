@@ -6,5 +6,5 @@ export const state = {
   banks: [],
   staff: [],
   accounts: [],
-  receipts: [],
+  fiscalYears: [],
 };

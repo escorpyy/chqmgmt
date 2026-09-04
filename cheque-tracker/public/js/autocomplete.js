@@ -4,10 +4,10 @@
 // Applies to every form field in the app, whatever its datatype:
 //
 //  - Free-text fields whose meaning maps onto one of the app's own master
-//    tables (Parties, Banks, Our accounts, Staff, Receipts — already loaded
-//    into state.js) get real inline "ghost text" suggested straight from
-//    that master data, live: as you type, a matching existing value is
-//    shown greyed-out ahead of the cursor (like a browser address bar).
+//    tables (Parties, Banks, Our accounts, Staff — already loaded into
+//    state.js) get real inline "ghost text" suggested straight from that
+//    master data, live: as you type, a matching existing value is shown
+//    greyed-out ahead of the cursor (like a browser address bar).
 //    Tab, or → at the end of the field, accepts it; Escape dismisses it.
 //    A field with no corresponding master table (a cheque number, a purpose
 //    note, an amount…) simply isn't wired — there's nothing authoritative
@@ -52,9 +52,9 @@ const FIELD_SOURCES = {
   // company account is held at) — both draw on the same real-world set of
   // branch locations, so pool what's already on file in either table.
   branch: () => [...state.banks.map((b) => b.branch), ...state.accounts.map((a) => a.branch)],
-  // Fiscal years and receipt numbers repeat heavily across Receipts.
-  fiscalYear: () => state.receipts.map((r) => r.fiscalYear),
-  receiptNo: () => state.receipts.map((r) => r.receiptNo),
+  // fiscalYear is now a combobox <select> (fiscalYearId, see combobox.js)
+  // rather than free text, and receiptNo has no master table behind it
+  // anymore — nothing left here to suggest either from.
 };
 
 function fieldKey(el) {

@@ -257,6 +257,28 @@ function openIssuedEditModal(c) {
           <textarea name="purpose">${escapeHtml(c.purpose || '')}</textarea>
         </div>
       </div>
+
+      <div class="section-title" style="margin-top:1rem">Risky fields</div>
+      <p class="hint" style="margin-top:0">These affect the account/cheque-no uniqueness check and the lifecycle day-count. You'll be asked to confirm if you change any of them.</p>
+      <div class="form-grid">
+        <div class="field">
+          <label>Cheque date *</label>
+          <input name="chqDate" type="date" required value="${fmtDateInput(c.chqDate)}">
+        </div>
+        <div class="field">
+          <label>Cheque no *</label>
+          <input name="chqNo" type="text" required value="${escapeHtml(c.chqNo)}">
+        </div>
+        <div class="field span-2">
+          <label>Our account *</label>
+          <select name="companyBankAccountId" required>${selectOptions(state.accounts, 'id', (a) => `${a.accountName} — ${a.bank?.name || ''}`, 'Select account…')}</select>
+        </div>
+        <div class="field">
+          <label>Payee type *</label>
+          <select name="payeeType" required>${enumOptions(PARTY_TYPES)}</select>
+        </div>
+      </div>
+
       <div class="form-actions">
         <button type="button" class="btn btn-ghost" id="cancel-edit-issued">Cancel</button>
         <button type="submit" class="btn btn-primary">Save changes</button>
@@ -267,11 +289,28 @@ function openIssuedEditModal(c) {
       const form = document.getElementById('form-edit-issued');
       form.querySelector('[name="issuedById"]').value = c.issuedById || '';
       syncEditableSelect(form.querySelector('[name="issuedById"]'));
+      form.querySelector('[name="companyBankAccountId"]').value = c.companyBankAccountId;
+      syncEditableSelect(form.querySelector('[name="companyBankAccountId"]'));
+      form.querySelector('[name="payeeType"]').value = c.payeeType;
       document.getElementById('cancel-edit-issued').addEventListener('click', closeModal);
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         clearFormError(form);
         const data = Object.fromEntries(new FormData(form).entries());
+
+        const riskyChanged = data.chqDate !== fmtDateInput(c.chqDate)
+          || data.chqNo !== c.chqNo
+          || data.companyBankAccountId !== c.companyBankAccountId
+          || data.payeeType !== c.payeeType;
+        if (riskyChanged) {
+          const ok = await openConfirmModal(
+            'Change risky fields?',
+            'You\'re changing the cheque date, cheque no, our account, or payee type. These affect the uniqueness check and the lifecycle day-count for this cheque. Continue?',
+            { confirmLabel: 'Save changes', danger: false },
+          );
+          if (!ok) return;
+        }
+
         try {
           await api(`/issued-cheques/${c.id}`, { method: 'PATCH', body: JSON.stringify(data) });
           toast('Issued cheque updated', 'success');
@@ -325,6 +364,11 @@ function openIssuedStatusModal(c) {
         <div class="field span-2">
           <label>New status *</label>
           <select name="status" id="status-select" required>${enumOptions(ISSUED_STATUSES)}</select>
+        </div>
+        <div class="field span-2">
+          <label>Status date *</label>
+          <input name="statusDate" type="date" id="status-date-input" required value="${fmtDateInput(c.statusDate)}" min="${fmtDateInput(c.chqDate)}">
+          <span class="hint">Total lifecycle (status date − cheque date) is recalculated from this.</span>
         </div>
         <div class="field span-2" id="clearance-field" style="display:none">
           <label>Clearance method</label>

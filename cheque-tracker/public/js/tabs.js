@@ -7,7 +7,7 @@ import { loadParties } from './parties.js';
 import { loadBanks } from './banks.js';
 import { loadAccounts } from './accounts.js';
 import { loadStaff } from './staff.js';
-import { loadReceipts } from './receipts.js';
+import { loadFiscalYears } from './fiscalYears.js';
 
 // ============================================================================
 // Tabs
@@ -22,7 +22,7 @@ const TAB_LOADERS = {
   banks: loadBanks,
   accounts: loadAccounts,
   staff: loadStaff,
-  receipts: loadReceipts,
+  'fiscal-years': loadFiscalYears,
 };
 
 document.getElementById('tabs').addEventListener('click', (e) => {

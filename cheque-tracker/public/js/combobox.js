@@ -2,7 +2,7 @@
 // Editable dropdowns (type-to-filter comboboxes)
 //
 // Applies to every <select> in the app whose options come from one of the
-// app's own master tables (Parties, Banks, Our accounts, Staff, Receipts —
+// app's own master tables (Parties, Banks, Our accounts, Staff, Fiscal years —
 // already loaded into state.js), keyed by the select's `name` attribute.
 // A plain enum <select> (status, payment method, party type…) has no master
 // table behind it — nothing to search against, nothing to create against —
@@ -48,10 +48,13 @@ const MASTER_FIELDS = {
   staffId: { items: () => state.staff, label: (s) => s.name },
   issuedById: { items: () => state.staff, label: (s) => s.name },
   raisedById: { items: () => state.staff, label: (s) => s.name },
-  receiptId: { items: () => state.receipts, label: (r) => `${r.fiscalYear} — ${r.receiptNo || 'no receipt no.'}` },
+  // receiptId is gone: fiscal year is now `fiscalYearId` below, and receipt
+  // no. is a plain free-text field on the cheque form, backed by no master
+  // table.
+  fiscalYearId: { items: () => state.fiscalYears, label: (f) => f.year },
 };
 
-// Registered by banks.js / staff.js / parties.js / accounts.js / receipts.js
+// Registered by banks.js / staff.js / parties.js / accounts.js / fiscalYears.js
 // once each, at module load — decouples this module from theirs (they each
 // import this module to register; this module never imports them back).
 const creators = {};

@@ -79,13 +79,12 @@ enum ChequeType {
   BEARER          // payee is an individual — can be cashed directly
 }
 
-model Receipt {
-  id         String   @id @default(cuid())
-  fiscalYear String   // FY, e.g. "2083/84"
-  receiptNo  String?  // Rpt No, e.g. "UR-001" — stays the same across cheque replacements; not unique, ChqNo is the real unique key
-  cheques    Cheque[]
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+model FiscalYear {
+  id        String   @id @default(cuid())
+  year      String   @unique // e.g. "2083/84"
+  cheques   Cheque[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Party {
@@ -184,8 +183,9 @@ model DailyBankBalance {
 model Cheque {
   id          String            @id @default(cuid())
 
-  receiptId   String            // shared across the original cheque and any replacements
-  receipt     Receipt           @relation(fields: [receiptId], references: [id], onDelete: Restrict)
+  fiscalYearId String           // FY this cheque is booked under, e.g. "2083/84"
+  fiscalYear   FiscalYear       @relation(fields: [fiscalYearId], references: [id], onDelete: Restrict)
+  receiptNo    String?          // Rpt No, e.g. "UR-001" — free text; not unique, ChqNo is the real unique key
 
   refNo       String?           // Ref No, e.g. "URT-001/01" — manually transcribed from a physical reference book, no fixed format
 
@@ -250,7 +250,7 @@ model Cheque {
   @@unique([bankId, chqNo])
   @@index([status, chqDate])
   @@index([chqDate])
-  @@index([receiptId])
+  @@index([fiscalYearId])
   @@index([issuerId])
   @@index([presentedBankId])
   @@index([staffId])

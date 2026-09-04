@@ -1,6 +1,6 @@
 // Importing tabs.js pulls in (and registers the event listeners for) every
 // feature module: dashboard, received, issued, dailyBalance, parties, banks,
-// accounts, staff and receipts.
+// accounts, staff and fiscal years.
 import './tabs.js';
 
 import { checkHealth, loadReferenceData } from './referenceData.js';

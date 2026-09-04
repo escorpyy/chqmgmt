@@ -10,7 +10,7 @@ import {
 const router = Router();
 
 const chequeInclude = {
-  receipt: true,
+  fiscalYear: true,
   issuer: true,
   bank: true,
   presentedBank: true,
@@ -42,7 +42,7 @@ router.get('/', asyncHandler(async (req, res) => {
 
   const cheques = await prisma.cheque.findMany({
     where,
-    include: { receipt: true, issuer: true, bank: true, presentedBank: true, staff: true },
+    include: { fiscalYear: true, issuer: true, bank: true, presentedBank: true, staff: true },
     orderBy: { chqDate: 'desc' },
   });
   res.json(cheques);
@@ -61,11 +61,11 @@ router.get('/:id', asyncHandler(async (req, res) => {
 // POST /api/cheques
 router.post('/', asyncHandler(async (req, res) => {
   const {
-    receiptId, refNo, issuerId, issuedOn, issuedOnType, payableToCompany,
+    fiscalYearId, receiptNo, refNo, issuerId, issuedOn, issuedOnType, payableToCompany,
     chqDate, chqNo, bankId, presentedBankId, amount, staffId,
   } = req.body;
 
-  const required = { receiptId, issuerId, issuedOn, issuedOnType, chqDate, chqNo, bankId, amount };
+  const required = { fiscalYearId, issuerId, issuedOn, issuedOnType, chqDate, chqNo, bankId, amount };
   const missing = Object.entries(required).filter(([, v]) => v === undefined || v === null || v === '');
   if (missing.length) {
     return res.status(400).json({ error: `Missing required fields: ${missing.map(([k]) => k).join(', ')}` });
@@ -85,7 +85,8 @@ router.post('/', asyncHandler(async (req, res) => {
   // to false for INDIVIDUAL payees rather than trusting the client to omit it.
   const cheque = await prisma.cheque.create({
     data: {
-      receiptId,
+      fiscalYearId,
+      receiptNo: receiptNo || null,
       refNo,
       issuerId,
       issuedOn,
@@ -104,9 +105,20 @@ router.post('/', asyncHandler(async (req, res) => {
   res.status(201).json(cheque);
 }));
 
-// PATCH /api/cheques/:id  (edit non-status fields)
+// PATCH /api/cheques/:id  (edit cheque details)
+//
+// Two tiers of fields:
+//   - Freely editable: refNo, presentedBankId, staffId, amount, fiscalYearId,
+//     receiptNo — none of these affect uniqueness or the day-count math.
+//   - "Risky" fields: chqDate, chqNo, bankId, issuedOnType. These feed the
+//     @@unique([bankId, chqNo]) constraint and/or totalDays, so the frontend
+//     warns/confirms before sending them — this route re-validates
+//     regardless, since the API shouldn't rely on the client having asked.
 router.patch('/:id', asyncHandler(async (req, res) => {
-  const { refNo, presentedBankId, staffId, amount } = req.body;
+  const {
+    refNo, presentedBankId, staffId, amount, fiscalYearId, receiptNo,
+    chqDate, chqNo, bankId, issuedOnType,
+  } = req.body;
 
   const existing = await prisma.cheque.findFirst({
     where: { id: req.params.id, deletedAt: null },
@@ -126,6 +138,23 @@ router.patch('/:id', asyncHandler(async (req, res) => {
     }
   }
 
+  let parsedChqDate;
+  let totalDays;
+  if (chqDate !== undefined) {
+    parsedChqDate = parseDateOrNull(chqDate);
+    if (!parsedChqDate) return res.status(400).json({ error: 'chqDate is not a valid date' });
+    if (parsedChqDate > existing.statusDate) {
+      return res.status(400).json({
+        error: 'chqDate cannot be after the cheque\'s current status date — update the status date first, or pick an earlier chqDate',
+      });
+    }
+    totalDays = computeTotalDays(parsedChqDate, existing.statusDate);
+  }
+
+  if (issuedOnType !== undefined && !isValidEnum(issuedOnType, PARTY_TYPES)) {
+    return res.status(400).json({ error: `issuedOnType must be one of: ${PARTY_TYPES.join(', ')}` });
+  }
+
   const cheque = await prisma.cheque.update({
     where: { id: req.params.id },
     data: {
@@ -133,6 +162,19 @@ router.patch('/:id', asyncHandler(async (req, res) => {
       ...(presentedBankId !== undefined ? { presentedBankId: presentedBankId || null } : {}),
       ...(staffId !== undefined ? { staffId: staffId || null } : {}),
       ...(amount !== undefined ? { amount } : {}),
+      ...(fiscalYearId !== undefined ? { fiscalYearId } : {}),
+      ...(receiptNo !== undefined ? { receiptNo: receiptNo || null } : {}),
+      // -- risky fields --
+      ...(chqDate !== undefined ? { chqDate: parsedChqDate, totalDays } : {}),
+      ...(chqNo !== undefined ? { chqNo } : {}),
+      ...(bankId !== undefined ? { bankId } : {}),
+      ...(issuedOnType !== undefined
+        ? {
+            issuedOnType,
+            chequeType: deriveChequeType(issuedOnType),
+            payableToCompany: issuedOnType === 'FIRM' ? existing.payableToCompany : false,
+          }
+        : {}),
     },
     include: chequeInclude,
   });
@@ -207,7 +249,8 @@ router.post('/:id/replace', asyncHandler(async (req, res) => {
 
   const replacement = await prisma.cheque.create({
     data: {
-      receiptId: original.receiptId,
+      fiscalYearId: original.fiscalYearId,
+      receiptNo: original.receiptNo,
       refNo: refNo ?? original.refNo,
       issuerId: original.issuerId,
       issuedOn: original.issuedOn,

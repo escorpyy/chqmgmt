@@ -5,14 +5,14 @@ import { state } from './state.js';
 // Reference data
 // ============================================================================
 export async function loadReferenceData() {
-  const [parties, banks, staff, accounts, receipts] = await Promise.all([
-    api('/parties'), api('/banks'), api('/staff'), api('/company-bank-accounts'), api('/receipts'),
+  const [parties, banks, staff, accounts, fiscalYears] = await Promise.all([
+    api('/parties'), api('/banks'), api('/staff'), api('/company-bank-accounts'), api('/fiscal-years'),
   ]);
   state.parties = parties;
   state.banks = banks;
   state.staff = staff;
   state.accounts = accounts;
-  state.receipts = receipts;
+  state.fiscalYears = fiscalYears;
 }
 
 export async function checkHealth() {
