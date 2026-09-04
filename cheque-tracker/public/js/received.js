@@ -6,6 +6,7 @@ import { openDrawer, closeDrawer } from './drawer.js';
 import { escapeHtml, fmtDate, fmtMoney, fmtDateInput, humanize, statusTag, selectOptions, enumOptions, debounce } from './utils.js';
 import { RECEIVED_STATUSES, FOLLOWUP_RESPONSES, RETURN_REASONS, PAYMENT_METHODS, CLEARANCE_METHODS, PARTY_TYPES } from './constants.js';
 import { loadDashboard } from './dashboard.js';
+import { syncEditableSelect } from './combobox.js';
 
 // ============================================================================
 // RECEIVED CHEQUES
@@ -276,7 +277,9 @@ function openChequeEditModal(c) {
     onMount: () => {
       const form = document.getElementById('form-edit-cheque');
       form.querySelector('[name="presentedBankId"]').value = c.presentedBankId || '';
+      syncEditableSelect(form.querySelector('[name="presentedBankId"]'));
       form.querySelector('[name="staffId"]').value = c.staffId || '';
+      syncEditableSelect(form.querySelector('[name="staffId"]'));
       document.getElementById('cancel-edit-cheque').addEventListener('click', closeModal);
       form.addEventListener('submit', async (e) => {
         e.preventDefault();

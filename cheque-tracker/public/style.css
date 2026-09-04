@@ -83,6 +83,57 @@ button { font-family: var(--font-body); }
 .bs-date-hint { flex: 1 1 100%; color: var(--ink-soft); font-size: 0.78rem; white-space: nowrap; }
 
 /* ==========================================================================
+   Editable dropdowns — combobox.js
+   ========================================================================== */
+/* Same "visually hidden but still focusable" trick as .bs-native-date: the
+   real <select> stays in the DOM (name attribute + required validation both
+   keep working) but is replaced on screen by the text input + list below. */
+.combo-native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.combo-field { position: relative; }
+.combo-list {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 3px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 0.25rem 0;
+  list-style: none;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--surface-raise);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-modal);
+}
+.combo-option {
+  padding: 0.42rem 0.65rem;
+  font-size: 0.86rem;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.combo-option.active,
+.combo-option:hover { background: var(--brand-tint); }
+.combo-create {
+  color: var(--brand-dark);
+  font-style: italic;
+  border-top: 1px solid var(--line-soft);
+  white-space: normal;
+}
+
+/* ==========================================================================
    Autocomplete — inline ghost-text suggestions (autocomplete.js)
    ========================================================================== */
 /* The real field sits on top (background: transparent, set inline by

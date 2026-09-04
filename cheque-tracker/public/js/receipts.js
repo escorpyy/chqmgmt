@@ -1,8 +1,10 @@
 import { api } from './api.js';
 import { toast } from './toast.js';
+import { state } from './state.js';
 import { openModal, closeModal, formError, clearFormError } from './modal.js';
 import { escapeHtml } from './utils.js';
 import { loadReferenceData } from './referenceData.js';
+import { registerMasterCreator } from './combobox.js';
 
 // ============================================================================
 // RECEIPTS
@@ -87,14 +89,17 @@ function openEditReceiptModal(receipt) {
   });
 }
 
-document.getElementById('btn-new-receipt').addEventListener('click', () => {
+// `fiscalYear` prefills the one field the receiptId dropdown's typed text
+// maps cleanly onto (the combobox's list shows "fiscal year — receipt no.",
+// a composite that doesn't split cleanly into both fields).
+export function openNewReceiptModal({ fiscalYear = '', onCreated } = {}) {
   const body = `
     <form id="form-new-receipt">
       <div class="form-error"></div>
       <div class="form-grid">
         <div class="field">
           <label>Fiscal year *</label>
-          <input name="fiscalYear" type="text" required placeholder="2083/84">
+          <input name="fiscalYear" type="text" required placeholder="2083/84" value="${escapeHtml(fiscalYear)}">
         </div>
         <div class="field">
           <label>Receipt no.</label>
@@ -109,21 +114,26 @@ document.getElementById('btn-new-receipt').addEventListener('click', () => {
   openModal('New receipt', body, {
     onMount: () => {
       const form = document.getElementById('form-new-receipt');
-      document.getElementById('cancel-new-receipt').addEventListener('click', closeModal);
+      document.getElementById('cancel-new-receipt').addEventListener('click', () => { closeModal(); onCreated?.(null); });
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         clearFormError(form);
         const data = Object.fromEntries(new FormData(form).entries());
         try {
-          await api('/receipts', { method: 'POST', body: JSON.stringify(data) });
+          const receipt = await api('/receipts', { method: 'POST', body: JSON.stringify(data) });
           toast('Receipt saved', 'success');
-          closeModal();
           await loadReferenceData();
           loadReceipts();
+          closeModal();
+          onCreated?.(state.receipts.find((r) => r.id === receipt.id) || receipt);
         } catch (err) {
           formError(form, err.message);
         }
       });
     },
   });
-});
+}
+
+document.getElementById('btn-new-receipt').addEventListener('click', () => openNewReceiptModal());
+
+registerMasterCreator('receiptId', (typed, onCreated) => openNewReceiptModal({ fiscalYear: typed, onCreated }));

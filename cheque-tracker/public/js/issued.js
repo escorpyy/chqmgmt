@@ -6,6 +6,7 @@ import { openDrawer, closeDrawer } from './drawer.js';
 import { escapeHtml, fmtDate, fmtMoney, fmtDateInput, humanize, statusTag, selectOptions, enumOptions, debounce } from './utils.js';
 import { ISSUED_STATUSES, ISSUED_FOLLOWUP_RESPONSES, RETURN_REASONS, PAYMENT_METHODS, CLEARANCE_METHODS, PARTY_TYPES } from './constants.js';
 import { loadDashboard } from './dashboard.js';
+import { syncEditableSelect } from './combobox.js';
 
 // ============================================================================
 // ISSUED CHEQUES
@@ -265,6 +266,7 @@ function openIssuedEditModal(c) {
     onMount: () => {
       const form = document.getElementById('form-edit-issued');
       form.querySelector('[name="issuedById"]').value = c.issuedById || '';
+      syncEditableSelect(form.querySelector('[name="issuedById"]'));
       document.getElementById('cancel-edit-issued').addEventListener('click', closeModal);
       form.addEventListener('submit', async (e) => {
         e.preventDefault();

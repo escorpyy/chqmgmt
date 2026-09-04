@@ -1,8 +1,10 @@
 import { api } from './api.js';
 import { toast } from './toast.js';
+import { state } from './state.js';
 import { openModal, closeModal, formError, clearFormError, openConfirmModal } from './modal.js';
 import { escapeHtml } from './utils.js';
 import { loadReferenceData } from './referenceData.js';
+import { registerMasterCreator } from './combobox.js';
 
 // ============================================================================
 // BANKS
@@ -107,14 +109,18 @@ async function deleteBank(bank) {
   }
 }
 
-document.getElementById('btn-new-bank').addEventListener('click', () => {
+// `name` prefills the bank-name field (e.g. with whatever was typed into an
+// editable dropdown before "+ Create …" was picked); `onCreated(bank)` is
+// called with the saved bank right before the modal closes back to whatever
+// opened it — `onCreated(null)` if the user cancels instead.
+export function openNewBankModal({ name = '', onCreated } = {}) {
   const body = `
     <form id="form-new-bank">
       <div class="form-error"></div>
       <div class="form-grid">
         <div class="field span-2">
           <label>Bank name *</label>
-          <input name="name" type="text" required>
+          <input name="name" type="text" required value="${escapeHtml(name)}">
         </div>
         <div class="field span-2">
           <label>Branch</label>
@@ -129,21 +135,27 @@ document.getElementById('btn-new-bank').addEventListener('click', () => {
   openModal('New bank', body, {
     onMount: () => {
       const form = document.getElementById('form-new-bank');
-      document.getElementById('cancel-new-bank').addEventListener('click', closeModal);
+      document.getElementById('cancel-new-bank').addEventListener('click', () => { closeModal(); onCreated?.(null); });
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         clearFormError(form);
         const data = Object.fromEntries(new FormData(form).entries());
         try {
-          await api('/banks', { method: 'POST', body: JSON.stringify(data) });
+          const bank = await api('/banks', { method: 'POST', body: JSON.stringify(data) });
           toast('Bank saved', 'success');
-          closeModal();
           await loadReferenceData();
           loadBanks();
+          closeModal();
+          onCreated?.(state.banks.find((b) => b.id === bank.id) || bank);
         } catch (err) {
           formError(form, err.message);
         }
       });
     },
   });
-});
+}
+
+document.getElementById('btn-new-bank').addEventListener('click', () => openNewBankModal());
+
+registerMasterCreator('bankId', (typed, onCreated) => openNewBankModal({ name: typed, onCreated }));
+registerMasterCreator('presentedBankId', (typed, onCreated) => openNewBankModal({ name: typed, onCreated }));

@@ -2,10 +2,27 @@
 // Modal
 // ============================================================================
 import { initBsDatePickers } from './bsDatePicker.js';
+import { initEditableSelects } from './combobox.js';
 import { initAutocomplete } from './autocomplete.js';
+
+// When a modal is opened while another is already open (e.g. an editable
+// dropdown's "+ Create …" opens a master table's own creation form on top of
+// the form it was triggered from), the modal that's already showing is
+// stashed here — as its live DOM nodes, not a re-render — rather than
+// discarded. closeModal() then pops one level back instead of closing
+// outright, and the stashed form reappears exactly as the user left it
+// (every field's value, including any in-progress combobox state, is
+// untouched, since it's the same nodes with the same listeners, not a
+// rebuild). An ordinary single modal never pushes anything here, so
+// closeModal() behaves exactly as before in every other case.
+const modalStack = [];
 
 export function openModal(titleHtml, bodyHtml, { onMount } = {}) {
   const content = document.getElementById('modal-content');
+  const alreadyOpen = document.getElementById('modal').classList.contains('open');
+  if (alreadyOpen && content.childNodes.length) {
+    modalStack.push(Array.from(content.childNodes));
+  }
   content.innerHTML = `
     <div class="modal-header">
       <h2>${titleHtml}</h2>
@@ -17,14 +34,20 @@ export function openModal(titleHtml, bodyHtml, { onMount } = {}) {
   document.getElementById('modal-backdrop').classList.add('open');
   document.getElementById('modal-close-btn').addEventListener('click', closeModal);
   initBsDatePickers(content);
+  initEditableSelects(content); // converts master-table-backed <select>s into editable dropdowns
   initAutocomplete(content); // must run after the BS pickers above so date suggestion chips have somewhere to attach
   if (onMount) onMount();
 }
 
 export function closeModal() {
+  const content = document.getElementById('modal-content');
+  if (modalStack.length) {
+    content.replaceChildren(...modalStack.pop());
+    return; // back one level — the modal itself stays open
+  }
   document.getElementById('modal').classList.remove('open');
   document.getElementById('modal-backdrop').classList.remove('open');
-  document.getElementById('modal-content').innerHTML = '';
+  content.innerHTML = '';
 }
 
 document.getElementById('modal-backdrop').addEventListener('click', closeModal);

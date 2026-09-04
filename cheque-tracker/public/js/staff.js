@@ -1,8 +1,10 @@
 import { api } from './api.js';
 import { toast } from './toast.js';
+import { state } from './state.js';
 import { openModal, closeModal, formError, clearFormError, openConfirmModal } from './modal.js';
 import { escapeHtml } from './utils.js';
 import { loadReferenceData } from './referenceData.js';
+import { registerMasterCreator } from './combobox.js';
 
 // ============================================================================
 // STAFF
@@ -105,14 +107,14 @@ async function deleteStaff(member) {
   }
 }
 
-document.getElementById('btn-new-staff').addEventListener('click', () => {
+export function openNewStaffModal({ name = '', onCreated } = {}) {
   const body = `
     <form id="form-new-staff">
       <div class="form-error"></div>
       <div class="form-grid">
         <div class="field span-2">
           <label>Name *</label>
-          <input name="name" type="text" required>
+          <input name="name" type="text" required value="${escapeHtml(name)}">
         </div>
         <div class="field span-2">
           <label>Phone</label>
@@ -127,21 +129,28 @@ document.getElementById('btn-new-staff').addEventListener('click', () => {
   openModal('New staff', body, {
     onMount: () => {
       const form = document.getElementById('form-new-staff');
-      document.getElementById('cancel-new-staff').addEventListener('click', closeModal);
+      document.getElementById('cancel-new-staff').addEventListener('click', () => { closeModal(); onCreated?.(null); });
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         clearFormError(form);
         const data = Object.fromEntries(new FormData(form).entries());
         try {
-          await api('/staff', { method: 'POST', body: JSON.stringify(data) });
+          const member = await api('/staff', { method: 'POST', body: JSON.stringify(data) });
           toast('Staff saved', 'success');
-          closeModal();
           await loadReferenceData();
           loadStaff();
+          closeModal();
+          onCreated?.(state.staff.find((s) => s.id === member.id) || member);
         } catch (err) {
           formError(form, err.message);
         }
       });
     },
   });
-});
+}
+
+document.getElementById('btn-new-staff').addEventListener('click', () => openNewStaffModal());
+
+registerMasterCreator('staffId', (typed, onCreated) => openNewStaffModal({ name: typed, onCreated }));
+registerMasterCreator('issuedById', (typed, onCreated) => openNewStaffModal({ name: typed, onCreated }));
+registerMasterCreator('raisedById', (typed, onCreated) => openNewStaffModal({ name: typed, onCreated }));

@@ -5,6 +5,7 @@ import { openModal, closeModal, formError, clearFormError, openConfirmModal } fr
 import { escapeHtml, humanize, selectOptions, enumOptions, debounce } from './utils.js';
 import { PARTY_TYPES } from './constants.js';
 import { loadReferenceData } from './referenceData.js';
+import { registerMasterCreator, syncEditableSelect } from './combobox.js';
 
 // ============================================================================
 // PARTIES
@@ -111,6 +112,7 @@ function openEditPartyModal(party) {
     onMount: () => {
       const form = document.getElementById('form-edit-party');
       form.querySelector('[name="firmId"]').value = party.firmId || '';
+      syncEditableSelect(form.querySelector('[name="firmId"]'));
       document.getElementById('cancel-edit-party').addEventListener('click', closeModal);
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -159,18 +161,20 @@ async function restoreParty(party) {
   }
 }
 
-document.getElementById('btn-new-party').addEventListener('click', () => {
+// `type` presets & locks the Type field — used when this is opened from the
+// firmId editable dropdown, which only ever wants to create a firm.
+export function openNewPartyModal({ name = '', type = '', onCreated } = {}) {
   const body = `
     <form id="form-new-party">
       <div class="form-error"></div>
       <div class="form-grid">
         <div class="field">
           <label>Type *</label>
-          <select name="type" required>${enumOptions(PARTY_TYPES)}</select>
+          <select name="type" required ${type ? 'disabled' : ''}>${enumOptions(PARTY_TYPES)}</select>
         </div>
         <div class="field">
           <label>Name *</label>
-          <input name="name" type="text" required>
+          <input name="name" type="text" required value="${escapeHtml(name)}">
         </div>
         <div class="field">
           <label>Phone</label>
@@ -197,22 +201,31 @@ document.getElementById('btn-new-party').addEventListener('click', () => {
   openModal('New party', body, {
     onMount: () => {
       const form = document.getElementById('form-new-party');
-      document.getElementById('cancel-new-party').addEventListener('click', closeModal);
+      if (type) form.querySelector('[name="type"]').value = type;
+      document.getElementById('cancel-new-party').addEventListener('click', () => { closeModal(); onCreated?.(null); });
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         clearFormError(form);
         const data = Object.fromEntries(new FormData(form).entries());
+        if (type) data.type = type; // disabled fields are excluded from FormData
         if (!data.firmId) delete data.firmId;
         try {
-          await api('/parties', { method: 'POST', body: JSON.stringify(data) });
+          const party = await api('/parties', { method: 'POST', body: JSON.stringify(data) });
           toast('Party saved', 'success');
-          closeModal();
           await loadReferenceData();
           loadParties();
+          closeModal();
+          onCreated?.(state.parties.find((p) => p.id === party.id) || party);
         } catch (err) {
           formError(form, err.message);
         }
       });
     },
   });
-});
+}
+
+document.getElementById('btn-new-party').addEventListener('click', () => openNewPartyModal());
+
+registerMasterCreator('payeeId', (typed, onCreated) => openNewPartyModal({ name: typed, onCreated }));
+registerMasterCreator('issuerId', (typed, onCreated) => openNewPartyModal({ name: typed, onCreated }));
+registerMasterCreator('firmId', (typed, onCreated) => openNewPartyModal({ name: typed, type: 'FIRM', onCreated }));

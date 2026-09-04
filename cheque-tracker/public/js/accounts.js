@@ -4,6 +4,7 @@ import { state } from './state.js';
 import { openModal, closeModal, formError, clearFormError, openConfirmModal } from './modal.js';
 import { escapeHtml, selectOptions } from './utils.js';
 import { loadReferenceData } from './referenceData.js';
+import { registerMasterCreator, syncEditableSelect } from './combobox.js';
 
 // ============================================================================
 // COMPANY BANK ACCOUNTS
@@ -83,6 +84,7 @@ function openEditAccountModal(account) {
     onMount: () => {
       const form = document.getElementById('form-edit-account');
       form.querySelector('[name="bankId"]').value = account.bankId || '';
+      syncEditableSelect(form.querySelector('[name="bankId"]'));
       document.getElementById('cancel-edit-account').addEventListener('click', closeModal);
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -118,7 +120,7 @@ async function deleteAccount(account) {
   }
 }
 
-document.getElementById('btn-new-account').addEventListener('click', () => {
+export function openNewAccountModal({ name = '', onCreated } = {}) {
   const body = `
     <form id="form-new-account">
       <div class="form-error"></div>
@@ -129,7 +131,7 @@ document.getElementById('btn-new-account').addEventListener('click', () => {
         </div>
         <div class="field span-2">
           <label>Account name *</label>
-          <input name="accountName" type="text" required placeholder="e.g. B Enterprises Pvt. Ltd.">
+          <input name="accountName" type="text" required placeholder="e.g. B Enterprises Pvt. Ltd." value="${escapeHtml(name)}">
         </div>
         <div class="field">
           <label>Account number *</label>
@@ -148,21 +150,26 @@ document.getElementById('btn-new-account').addEventListener('click', () => {
   openModal('New company bank account', body, {
     onMount: () => {
       const form = document.getElementById('form-new-account');
-      document.getElementById('cancel-new-account').addEventListener('click', closeModal);
+      document.getElementById('cancel-new-account').addEventListener('click', () => { closeModal(); onCreated?.(null); });
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         clearFormError(form);
         const data = Object.fromEntries(new FormData(form).entries());
         try {
-          await api('/company-bank-accounts', { method: 'POST', body: JSON.stringify(data) });
+          const account = await api('/company-bank-accounts', { method: 'POST', body: JSON.stringify(data) });
           toast('Account saved', 'success');
-          closeModal();
           await loadReferenceData();
           loadAccounts();
+          closeModal();
+          onCreated?.(state.accounts.find((a) => a.id === account.id) || account);
         } catch (err) {
           formError(form, err.message);
         }
       });
     },
   });
-});
+}
+
+document.getElementById('btn-new-account').addEventListener('click', () => openNewAccountModal());
+
+registerMasterCreator('companyBankAccountId', (typed, onCreated) => openNewAccountModal({ name: typed, onCreated }));

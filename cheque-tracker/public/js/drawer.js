@@ -2,6 +2,7 @@
 // Drawer
 // ============================================================================
 import { initBsDatePickers } from './bsDatePicker.js';
+import { initEditableSelects } from './combobox.js';
 import { initAutocomplete } from './autocomplete.js';
 
 export function openDrawer(html) {
@@ -10,6 +11,7 @@ export function openDrawer(html) {
   document.getElementById('drawer').classList.add('open');
   document.getElementById('drawer-backdrop').classList.add('open');
   initBsDatePickers(content);
+  initEditableSelects(content);
   initAutocomplete(content); // must run after the BS pickers above so date suggestion chips have somewhere to attach
 }
 

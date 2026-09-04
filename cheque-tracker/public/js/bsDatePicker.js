@@ -22,9 +22,9 @@ const BS_YEAR_MAX = 2090;
 
 function fmtAdShort(isoDate) {
   if (!isoDate) return '';
-  const d = new Date(isoDate);
-  if (isNaN(d.getTime())) return '';
-  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
+  const [y, m, d] = String(isoDate).slice(0, 10).split('-');
+  if (!y || !m || !d) return '';
+  return `${d}/${m}/${y}`;
 }
 
 /**

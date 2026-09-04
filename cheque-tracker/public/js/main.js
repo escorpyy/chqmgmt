@@ -9,6 +9,7 @@ import { toast } from './toast.js';
 import { closeModal } from './modal.js';
 import { closeDrawer } from './drawer.js';
 import { initBsDatePickers } from './bsDatePicker.js';
+import { initEditableSelects } from './combobox.js';
 import { initAutocomplete } from './autocomplete.js';
 
 // ============================================================================
@@ -26,6 +27,7 @@ document.addEventListener('keydown', (e) => {
 // ============================================================================
 (async function init() {
   initBsDatePickers(document); // e.g. the daily-balance date picker, present at load
+  initEditableSelects(document);
   initAutocomplete(document); // e.g. the toolbar search/filter fields, present at load
   await checkHealth();
   try {
