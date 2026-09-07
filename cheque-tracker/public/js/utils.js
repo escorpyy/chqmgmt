@@ -1,7 +1,7 @@
 // ============================================================================
 // Small utilities
 // ============================================================================
-import { formatBsLong } from './nepaliDate.js';
+import { formatBsLong, formatBsSlash } from './nepaliDate.js';
 
 export function humanize(value) {
   if (!value) return '—';
@@ -45,6 +45,23 @@ export function fmtBsDate(value) {
   if (!value) return '—';
   const bs = formatBsLong(value);
   return bs ? `${bs} BS` : '—';
+}
+
+// AD date as dd/mm/yyyy — pairs with formatBsSlash for the stacked cell below.
+export function fmtDateAdSlash(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  const pad2 = (n) => String(n).padStart(2, '0');
+  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+
+// Two-line date cell for dense tables: BS dd/mm/yyyy on top, AD dd/mm/yyyy
+// below it. Returns HTML — use inside a <td>.
+export function fmtDateStacked(value) {
+  if (!value) return '—';
+  const bs = formatBsSlash(value);
+  const ad = fmtDateAdSlash(value);
+  return `<div class="date-stack"><span class="date-bs">${bs || '—'}</span><span class="date-ad muted">${ad}</span></div>`;
 }
 
 export function fmtDateInput(value) {
