@@ -175,6 +175,17 @@ export function formatBsLong(value) {
 }
 
 /**
+ * "17/05/2083" — BS date as dd/mm/yyyy, for dense table cells.
+ */
+export function formatBsSlash(value) {
+  if (!value) return null;
+  const bs = adToBs(value);
+  if (!bs) return null;
+  const pad2 = (n) => String(n).padStart(2, '0');
+  return `${pad2(bs.day)}/${pad2(bs.month + 1)}/${bs.year}`;
+}
+
+/**
  * "2083-05-17" — BS date in ISO-ish YYYY-MM-DD form.
  */
 export function formatBsIso(value) {
