@@ -3,7 +3,7 @@ import { toast } from './toast.js';
 import { state } from './state.js';
 import { openModal, closeModal, formError, clearFormError, openConfirmModal } from './modal.js';
 import { openDrawer, closeDrawer } from './drawer.js';
-import { escapeHtml, fmtDate, fmtDateAdOnly, fmtMoney, fmtDateInput, humanize, statusTag, selectOptions, enumOptions, debounce, daysSince, ageTag } from './utils.js';
+import { escapeHtml, fmtDate, fmtDateStacked, fmtMoney, fmtDateInput, humanize, statusTag, selectOptions, enumOptions, debounce, daysSince, ageTag } from './utils.js';
 import { ISSUED_STATUSES, ISSUED_FOLLOWUP_RESPONSES, RETURN_REASONS, PAYMENT_METHODS, CLEARANCE_METHODS, PARTY_TYPES } from './constants.js';
 import { loadDashboard } from './dashboard.js';
 import { syncEditableSelect } from './combobox.js';
@@ -50,7 +50,7 @@ function renderIssuedTable(cheques) {
           return `
           <tr data-id="${c.id}">
             <td class="num">${escapeHtml(c.chqNo)}</td>
-            <td class="num">${fmtDateAdOnly(c.chqDate)}</td>
+            <td class="num">${fmtDateStacked(c.chqDate)}</td>
             <td>${escapeHtml(c.payeeName)}</td>
             <td class="amount">${fmtMoney(c.amount)}</td>
             <td>${escapeHtml(bankAccount)}</td>
