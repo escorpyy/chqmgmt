@@ -3,7 +3,7 @@ import { toast } from './toast.js';
 import { state } from './state.js';
 import { openModal, closeModal, formError, clearFormError, openConfirmModal } from './modal.js';
 import { openDrawer, closeDrawer } from './drawer.js';
-import { escapeHtml, fmtDate, fmtMoney, fmtDateInput, humanize, statusTag, selectOptions, enumOptions, debounce } from './utils.js';
+import { escapeHtml, fmtDate, fmtDateAdOnly, fmtMoney, fmtDateInput, humanize, statusTag, selectOptions, enumOptions, debounce, daysSince, ageTag } from './utils.js';
 import { ISSUED_STATUSES, ISSUED_FOLLOWUP_RESPONSES, RETURN_REASONS, PAYMENT_METHODS, CLEARANCE_METHODS, PARTY_TYPES } from './constants.js';
 import { loadDashboard } from './dashboard.js';
 import { syncEditableSelect } from './combobox.js';
@@ -35,19 +35,30 @@ function renderIssuedTable(cheques) {
   el.innerHTML = `
     <table class="ledger">
       <thead><tr>
-        <th>Cheque no</th><th>Payee</th><th>Our account</th>
-        <th>Cheque date</th><th>Amount</th><th>Status</th>
+        <th>Cheque no</th><th>Cheque date</th><th>Payee</th><th>Amount</th>
+        <th>Bank · account</th><th>Status</th><th>Age</th><th>Purpose</th>
       </tr></thead>
       <tbody>
-        ${cheques.map((c) => `
+        ${cheques.map((c) => {
+          // "Age" tracks how long a cheque has sat in its current status.
+          // For a cleared cheque that's a fixed, historical span (totalDays,
+          // computed once at clearance); for anything still in play it's
+          // live — days since the last status change, as of right now.
+          const ageDays = c.status === 'CLEARED' ? c.totalDays : daysSince(c.statusDate);
+          const bankAccount = [c.companyBankAccount?.bank?.name, c.companyBankAccount?.accountName]
+            .filter(Boolean).join(' · ') || '—';
+          return `
           <tr data-id="${c.id}">
             <td class="num">${escapeHtml(c.chqNo)}</td>
+            <td class="num">${fmtDateAdOnly(c.chqDate)}</td>
             <td>${escapeHtml(c.payeeName)}</td>
-            <td>${escapeHtml(c.companyBankAccount?.bank?.name || '—')}</td>
-            <td>${fmtDate(c.chqDate)}</td>
             <td class="amount">${fmtMoney(c.amount)}</td>
+            <td>${escapeHtml(bankAccount)}</td>
             <td>${statusTag(c.status)}</td>
-          </tr>`).join('')}
+            <td>${ageTag(ageDays)}</td>
+            <td class="cell-truncate" title="${escapeHtml(c.purpose || '')}">${escapeHtml(c.purpose || '—')}</td>
+          </tr>`;
+        }).join('')}
       </tbody>
     </table>`;
   el.querySelectorAll('tr[data-id]').forEach((row) => {
