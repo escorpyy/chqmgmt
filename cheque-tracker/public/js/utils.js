@@ -70,6 +70,26 @@ export function enumOptions(values, placeholder) {
   return opts.join('');
 }
 
+// Whole days between a stored date and now. Used for "age" / "days
+// outstanding" columns — client-side only, purely for display, so it
+// always reflects "as of right now" even for a status that's been sitting
+// unchanged since the page loaded.
+export function daysSince(value) {
+  if (!value) return null;
+  const ms = Date.now() - new Date(value).getTime();
+  if (ms < 0) return 0;
+  return Math.floor(ms / (1000 * 60 * 60 * 24));
+}
+
+// Renders an age in days, flagging it as stale past the threshold so a
+// register can be scanned for what's been sitting too long without opening
+// every row.
+export function ageTag(days, staleAfter = 30) {
+  if (days === null || days === undefined) return '<span class="muted">—</span>';
+  const cls = days > staleAfter ? 'age-stale' : '';
+  return `<span class="num ${cls}">${days}d</span>`;
+}
+
 export function debounce(fn, wait) {
   let t;
   return (...args) => {
