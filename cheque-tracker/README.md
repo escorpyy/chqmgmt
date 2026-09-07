@@ -42,7 +42,8 @@ npm install
 
 ```bash
 cp .env.example .env
-# edit .env — point DATABASE_URL at your local Postgres instance
+# edit .env — point DATABASE_URL at your local Postgres instance,
+# and set SESSION_SECRET to a long random string (e.g. `openssl rand -hex 32`)
 ```
 
 Make sure the target database exists, e.g.:
@@ -78,7 +79,26 @@ npm run db:apply-manual
 
 Re-run this any time you reset the database (`prisma migrate reset`).
 
-## 5. Start the server
+## 5. Create your first login
+
+The app requires sign-in — there's no self-registration screen, since this
+is a single-business internal tool. Create the first admin account from the
+CLI:
+
+```bash
+npm run create-admin -- <username> <password>
+```
+
+This upserts a user with the `ADMIN` role (pass `--staff` as a third arg to
+create a regular staff login instead). Once you're signed in, the **Users**
+tab (visible to admins only) lets you create and manage further logins —
+role, active/deactivated, password reset — without touching the CLI again.
+
+Sessions are stored server-side in Postgres (the `session` table, created by
+the migration above) via `connect-pg-simple`, so restarting the server
+doesn't log anyone out.
+
+## 6. Start the server
 
 ```bash
 npm run dev     # auto-restarts on file changes (node --watch)

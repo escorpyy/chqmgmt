@@ -10,15 +10,19 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
-    "db:apply-manual": "node scripts/apply-manual-migration.js"
+    "db:apply-manual": "node scripts/apply-manual-migration.js",
+    "create-admin": "node scripts/create-admin.js"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^5.20.0",
     "@prisma/client": "^5.20.0",
+    "bcryptjs": "^2.4.3",
+    "connect-pg-simple": "^10.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "exceljs": "^4.4.0",
     "express": "^4.21.0",
+    "express-session": "^1.18.1",
     "multer": "^1.4.5-lts.1",
     "pg": "^8.13.0",
     "xlsx": "^0.18.5"

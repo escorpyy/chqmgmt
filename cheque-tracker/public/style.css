@@ -504,8 +504,9 @@ td.row-actions {
   border-radius: var(--radius);
   box-shadow: var(--shadow-modal);
   width: 100%;
-  max-width: 520px;
+  max-width: 730px;
   padding: 1.75rem;
+
 }
 .modal-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.1rem; }
 .modal-header h2 { font-size: 1.2rem; }

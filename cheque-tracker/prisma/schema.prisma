@@ -8,6 +8,11 @@ generator client {
   previewFeatures = ["driverAdapters"]
 }
 
+enum UserRole {
+  ADMIN   // full access, including user management and permanent-delete from Trash
+  STAFF   // day-to-day cheque/party/bank data entry, no user management
+}
+
 enum ChequeStatus {
   PENDING     // received, not yet followed up
   FOLLOWUP    // in the call/negotiation cycle
@@ -430,4 +435,28 @@ model IssuedChequeCheckLog {
 
   @@index([issuedChequeId])
   @@index([raisedById])
+}
+
+model User {
+  id           String    @id @default(cuid())
+  username     String    @unique
+  passwordHash String
+  role         UserRole  @default(STAFF)
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// express-session store (connect-pg-simple). Table name/shape is fixed by
+// that package, not by us — Prisma just needs to know it exists so
+// `prisma migrate dev` doesn't try to drop it on a future migration.
+model Session {
+  sid    String   @id @db.VarChar
+  sess   Json
+  expire DateTime @db.Timestamp(6)
+
+  @@index([expire])
+  @@map("session")
 }

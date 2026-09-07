@@ -1,11 +1,17 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import session from 'express-session';
+import connectPgSimple from 'connect-pg-simple';
+import pg from 'pg';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Prisma } from '@prisma/client';
 
 import { prisma } from './lib/prisma.js';
+import { requireAuth, requireAdmin } from './lib/auth.js';
+import authRouter from './routes/auth.js';
+import usersRouter from './routes/users.js';
 import partiesRouter from './routes/parties.js';
 import banksRouter from './routes/banks.js';
 import staffRouter from './routes/staff.js';
@@ -19,9 +25,46 @@ import importExportRouter from './routes/importExport.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+if (!process.env.SESSION_SECRET) {
+  throw new Error('SESSION_SECRET is not set. Add a long random string to .env.');
+}
+
 const app = express();
-app.use(cors());
+// credentials: true is required for the session cookie to travel with
+// fetch() requests made from the frontend (which sets credentials: 'include').
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
+
+const PgSession = connectPgSimple(session);
+const sessionPool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+app.use(session({
+  store: new PgSession({ pool: sessionPool, tableName: 'session', createTableIfMissing: false }),
+  secret: process.env.SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
+  },
+}));
+
+// ---- Routes reachable without a logged-in session -------------------------
+app.use('/api/auth', authRouter);
+app.get('/api/health', async (req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ status: 'ok', db: 'connected' });
+  } catch (err) {
+    res.status(503).json({ status: 'error', db: 'disconnected', message: err.message });
+  }
+});
+
+// ---- Everything below requires a logged-in session ------------------------
+app.use('/api', requireAuth);
+
+app.use('/api/users', requireAdmin, usersRouter);
 
 // ---- API routes ----------------------------------------------------------
 app.use('/api/parties', partiesRouter);
@@ -34,15 +77,6 @@ app.use('/api/issued-cheques', issuedChequesRouter);
 app.use('/api/dashboard', dashboardRouter);
 app.use('/api/daily-balance', dailyBalanceRouter);
 app.use('/api/import-export', importExportRouter);
-
-app.get('/api/health', async (req, res) => {
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    res.json({ status: 'ok', db: 'connected' });
-  } catch (err) {
-    res.status(503).json({ status: 'error', db: 'disconnected', message: err.message });
-  }
-});
 
 // ---- Static frontend ------------------------------------------------------
 app.use(express.static(path.join(__dirname, 'public')));

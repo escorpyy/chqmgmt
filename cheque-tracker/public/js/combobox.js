@@ -30,8 +30,8 @@
 // same pattern as initBsDatePickers() and initAutocomplete().
 // ============================================================================
 
-import { state } from './state.js';
-import { escapeHtml } from './utils.js';
+import { state } from "./state.js";
+import { escapeHtml } from "./utils.js";
 
 const MAX_MATCHES = 30;
 
@@ -41,10 +41,16 @@ const MAX_MATCHES = 30;
 const MASTER_FIELDS = {
   bankId: { items: () => state.banks, label: (b) => b.name },
   presentedBankId: { items: () => state.banks, label: (b) => b.name },
-  companyBankAccountId: { items: () => state.accounts, label: (a) => `${a.accountName} — ${a.bank?.name || ''}` },
+  companyBankAccountId: {
+    items: () => state.accounts,
+    label: (a) => `${a.accountName} — ${a.bank?.name || ""}`,
+  },
   payeeId: { items: () => state.parties, label: (p) => p.name },
   issuerId: { items: () => state.parties, label: (p) => p.name },
-  firmId: { items: () => state.parties.filter((p) => p.type === 'FIRM'), label: (p) => p.name },
+  firmId: {
+    items: () => state.parties.filter((p) => p.type === "FIRM"),
+    label: (p) => p.name,
+  },
   staffId: { items: () => state.staff, label: (s) => s.name },
   issuedById: { items: () => state.staff, label: (s) => s.name },
   raisedById: { items: () => state.staff, label: (s) => s.name },
@@ -69,7 +75,7 @@ function fieldKey(select) {
 }
 
 function currentOptions(select) {
-  return Array.from(select.options).filter((o) => o.value !== '');
+  return Array.from(select.options).filter((o) => o.value !== "");
 }
 
 function wireOne(select) {
@@ -77,43 +83,44 @@ function wireOne(select) {
   const source = key && MASTER_FIELDS[key];
   if (!source) return; // no master table backs this select — leave it as a plain <select>
   if (select.disabled) return; // e.g. party edit form's firmId when type === FIRM — leave visible & greyed out as-is
-  select.dataset.comboWired = '1';
-  select.classList.add('combo-native');
+  select.dataset.comboWired = "1";
+  select.classList.add("combo-native");
   select.tabIndex = -1; // the text input below is the real interactive control
 
-  const wrap = document.createElement('div');
-  wrap.className = 'combo-field';
+  const wrap = document.createElement("div");
+  wrap.className = "combo-field";
 
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.className = 'combo-input';
-  input.autocomplete = 'off';
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "combo-input";
+  input.autocomplete = "off";
   input.spellcheck = false;
+  input.style.width = "250px";
   const placeholderOpt = select.querySelector('option[value=""]');
   if (placeholderOpt) input.placeholder = placeholderOpt.textContent;
 
-  const list = document.createElement('ul');
-  list.className = 'combo-list';
+  const list = document.createElement("ul");
+  list.className = "combo-list";
   list.hidden = true;
 
   wrap.append(input, list);
-  select.insertAdjacentElement('afterend', wrap);
+  select.insertAdjacentElement("afterend", wrap);
 
   let activeIndex = -1;
   let matches = []; // [{ type: 'option', id, label } | { type: 'create', text }]
 
   function labelForValue(value) {
     const opt = currentOptions(select).find((o) => o.value === value);
-    return opt ? opt.textContent : '';
+    return opt ? opt.textContent : "";
   }
 
   function syncFromSelect() {
-    input.value = select.value ? labelForValue(select.value) : '';
+    input.value = select.value ? labelForValue(select.value) : "";
   }
 
   function closeList() {
     list.hidden = true;
-    list.innerHTML = '';
+    list.innerHTML = "";
     activeIndex = -1;
     matches = [];
   }
@@ -121,7 +128,7 @@ function wireOne(select) {
   function pickOption(id, label) {
     select.value = id;
     input.value = label;
-    select.dispatchEvent(new Event('change', { bubbles: true }));
+    select.dispatchEvent(new Event("change", { bubbles: true }));
     closeList();
   }
 
@@ -144,35 +151,43 @@ function wireOne(select) {
     const seen = new Set();
     const found = [];
     for (const item of source.items()) {
-      const label = (source.label(item) || '').toString();
+      const label = (source.label(item) || "").toString();
       if (!label || seen.has(label)) continue;
       if (lower && !label.toLowerCase().includes(lower)) continue;
       seen.add(label);
-      found.push({ type: 'option', id: String(item.id), label });
+      found.push({ type: "option", id: String(item.id), label });
       if (found.length >= MAX_MATCHES) break;
     }
     matches = found;
 
     const typedTrimmed = typed.trim();
-    const exactMatch = lower && found.some((m) => m.label.toLowerCase() === lower);
+    const exactMatch =
+      lower && found.some((m) => m.label.toLowerCase() === lower);
     if (typedTrimmed && !exactMatch && creators[key]) {
-      matches = [...found, { type: 'create', text: typedTrimmed }];
+      matches = [...found, { type: "create", text: typedTrimmed }];
     }
 
-    if (!matches.length) { closeList(); return; }
+    if (!matches.length) {
+      closeList();
+      return;
+    }
 
-    list.innerHTML = matches.map((m, i) => m.type === 'create'
-      ? `<li class="combo-option combo-create" data-index="${i}">+ Create “${escapeHtml(m.text)}”…</li>`
-      : `<li class="combo-option" data-index="${i}">${escapeHtml(m.label)}</li>`).join('');
+    list.innerHTML = matches
+      .map((m, i) =>
+        m.type === "create"
+          ? `<li class="combo-option combo-create" data-index="${i}">+ Create “${escapeHtml(m.text)}”…</li>`
+          : `<li class="combo-option" data-index="${i}">${escapeHtml(m.label)}</li>`,
+      )
+      .join("");
     list.hidden = false;
     activeIndex = -1;
 
-    list.querySelectorAll('li').forEach((li) => {
+    list.querySelectorAll("li").forEach((li) => {
       // mousedown (not click) so this fires before the input's blur handler closes the list
-      li.addEventListener('mousedown', (e) => {
+      li.addEventListener("mousedown", (e) => {
         e.preventDefault();
         const m = matches[Number(li.dataset.index)];
-        if (m.type === 'create') pickCreate(m.text);
+        if (m.type === "create") pickCreate(m.text);
         else pickOption(m.id, m.label);
       });
     });
@@ -180,37 +195,40 @@ function wireOne(select) {
 
   function setActive(i) {
     activeIndex = i;
-    const items = list.querySelectorAll('li');
-    items.forEach((li, idx) => li.classList.toggle('active', idx === i));
-    items[i]?.scrollIntoView({ block: 'nearest' });
+    const items = list.querySelectorAll("li");
+    items.forEach((li, idx) => li.classList.toggle("active", idx === i));
+    items[i]?.scrollIntoView({ block: "nearest" });
   }
 
-  input.addEventListener('input', () => render(input.value));
-  input.addEventListener('focus', () => render(input.value));
-  input.addEventListener('blur', () => {
+  input.addEventListener("input", () => render(input.value));
+  input.addEventListener("focus", () => render(input.value));
+  input.addEventListener("blur", () => {
     // Editable dropdown, not a free-text field: only picking from the list
     // (or creating a new record) can change the underlying select, so
     // anything left typed but not chosen reverts to whatever was selected.
-    setTimeout(() => { syncFromSelect(); closeList(); }, 0);
+    setTimeout(() => {
+      syncFromSelect();
+      closeList();
+    }, 0);
   });
-  input.addEventListener('keydown', (e) => {
-    if (list.hidden && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+  input.addEventListener("keydown", (e) => {
+    if (list.hidden && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
       render(input.value);
       return;
     }
-    if (e.key === 'ArrowDown') {
+    if (e.key === "ArrowDown") {
       e.preventDefault();
       setActive(Math.min(activeIndex + 1, matches.length - 1));
-    } else if (e.key === 'ArrowUp') {
+    } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setActive(Math.max(activeIndex - 1, 0));
-    } else if (e.key === 'Enter') {
+    } else if (e.key === "Enter") {
       if (activeIndex < 0 || !matches[activeIndex]) return;
       e.preventDefault();
       const m = matches[activeIndex];
-      if (m.type === 'create') pickCreate(m.text);
+      if (m.type === "create") pickCreate(m.text);
       else pickOption(m.id, m.label);
-    } else if (e.key === 'Escape') {
+    } else if (e.key === "Escape") {
       closeList();
       syncFromSelect();
     }
@@ -226,7 +244,7 @@ function wireOne(select) {
 
 // ----------------------------------------------------------------------------
 export function initEditableSelects(root = document) {
-  root.querySelectorAll('select').forEach((el) => {
+  root.querySelectorAll("select").forEach((el) => {
     if (el.dataset.comboWired) return;
     wireOne(el);
   });
