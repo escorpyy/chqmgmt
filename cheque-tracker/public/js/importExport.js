@@ -1,6 +1,7 @@
 import { API } from './constants.js';
 import { toast } from './toast.js';
 import { escapeHtml } from './utils.js';
+import { loadReferenceData } from './referenceData.js';
 
 // ============================================================================
 // IMPORT / EXPORT
@@ -111,6 +112,19 @@ function renderImportExportGrid(tables) {
         toast(body.failed ? `Imported with ${body.failed} error(s)` : 'Import complete', body.failed ? 'error' : 'success');
         form.reset();
         warning.classList.remove('show');
+
+        // Comboboxes across the app (issuer, payee, bank, staff, fiscal year…)
+        // read from the shared reference-data cache, which is only populated
+        // once at page load — without this, newly imported rows exist in the
+        // DB and show up on their own tab, but silently don't appear as
+        // suggestions anywhere else until a full page reload.
+        if (body.created > 0) {
+          try {
+            await loadReferenceData();
+          } catch (err) {
+            toast(`Imported, but could not refresh dropdowns: ${err.message}. Reload the page to see the new entries everywhere.`, 'error');
+          }
+        }
       } catch (err) {
         resultEl.innerHTML = '';
         toast(err.message, 'error');
