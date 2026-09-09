@@ -13,6 +13,30 @@ enum UserRole {
   STAFF   // day-to-day cheque/party/bank data entry, no user management
 }
 
+// A single business/ecosystem. Every operational record (parties, banks,
+// staff, accounts, fiscal years, cheques) belongs to exactly one Company —
+// switching companies in the header changes which slice of the data you see.
+model Company {
+  id          String @id @default(cuid())
+  name        String
+
+  createdById String
+  createdBy   User   @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  parties             Party[]
+  banks               Bank[]
+  staff               Staff[]
+  companyBankAccounts CompanyBankAccount[]
+  fiscalYears         FiscalYear[]
+  cheques             Cheque[]
+  issuedCheques       IssuedCheque[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdById])
+}
+
 enum ChequeStatus {
   PENDING     // received, not yet followed up
   FOLLOWUP    // in the call/negotiation cycle
@@ -86,19 +110,30 @@ enum ChequeType {
 
 model FiscalYear {
   id        String   @id @default(cuid())
-  year      String   @unique // e.g. "2083/84"
+
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+
+  year      String   // e.g. "2083/84" — unique per company, see @@unique below
   cheques   Cheque[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([companyId, year])
+  @@index([companyId])
 }
 
 model Party {
   id        String     @id @default(cuid())
+
+  companyId String
+  company   Company    @relation(fields: [companyId], references: [id], onDelete: Restrict)
+
   type      PartyType
   name      String
   phone     String?
   address   String?
-  panNo     String?    @unique
+  panNo     String?    // unique per company, see @@unique below
 
   // For an INDIVIDUAL party: the firm they're affiliated with/represent
   firmId    String?
@@ -112,6 +147,8 @@ model Party {
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 
+  @@unique([companyId, panNo])
+  @@index([companyId])
   @@index([name])
   @@index([firmId])
   @@index([deletedAt])
@@ -119,17 +156,28 @@ model Party {
 
 model Bank {
   id               String   @id @default(cuid())
-  name             String   @unique // NOTE: case-sensitive at the Prisma/Postgres level — see manual-migration-additions.sql for a case-insensitive unique index
+
+  companyId        String
+  company          Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+
+  name             String   // unique per company (case-sensitive at the Prisma/Postgres level — see manual-migration-additions.sql for a case-insensitive unique index), see @@unique below
   branch           String?
   draweeCheques    Cheque[] @relation("DraweeBank")
   presentedCheques Cheque[] @relation("PresentedBank")
   companyAccounts  CompanyBankAccount[]
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+
+  @@unique([companyId, name])
+  @@index([companyId])
 }
 
 model Staff {
   id        String           @id @default(cuid())
+
+  companyId String
+  company   Company          @relation(fields: [companyId], references: [id], onDelete: Restrict)
+
   name      String
   phone     String?
   cheques   Cheque[]         @relation("HandledBy")
@@ -145,20 +193,28 @@ model Staff {
 
   createdAt DateTime         @default(now())
   updatedAt DateTime         @updatedAt
+
+  @@index([companyId])
 }
 
 model CompanyBankAccount {
   id            String   @id @default(cuid())
+
+  companyId     String
+  company       Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+
   bankId        String
   bank          Bank     @relation(fields: [bankId], references: [id], onDelete: Restrict)
   accountName   String   // legal name on the account, e.g. "B Enterprises Pvt. Ltd."
-  accountNumber String   @unique
+  accountNumber String   // unique per company, see @@unique below
   branch        String?
   issuedCheques IssuedCheque[]
   dailyBalances DailyBankBalance[]
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  @@unique([companyId, accountNumber])
+  @@index([companyId])
   @@index([bankId])
 }
 
@@ -187,6 +243,9 @@ model DailyBankBalance {
 
 model Cheque {
   id          String            @id @default(cuid())
+
+  companyId   String
+  company     Company           @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   fiscalYearId String           // FY this cheque is booked under, e.g. "2083/84"
   fiscalYear   FiscalYear       @relation(fields: [fiscalYearId], references: [id], onDelete: Restrict)
@@ -253,6 +312,7 @@ model Cheque {
   updatedAt   DateTime          @updatedAt
 
   @@unique([bankId, chqNo])
+  @@index([companyId])
   @@index([status, chqDate])
   @@index([chqDate])
   @@index([fiscalYearId])
@@ -304,6 +364,9 @@ model ChequePayment {
 model IssuedCheque {
   id          String              @id @default(cuid())
 
+  companyId   String
+  company     Company             @relation(fields: [companyId], references: [id], onDelete: Restrict)
+
   companyBankAccountId String
   companyBankAccount   CompanyBankAccount @relation(fields: [companyBankAccountId], references: [id], onDelete: Restrict)
 
@@ -349,6 +412,7 @@ model IssuedCheque {
   updatedAt   DateTime            @updatedAt
 
   @@unique([companyBankAccountId, chqNo])
+  @@index([companyId])
   @@index([status, chqDate])
   @@index([chqDate])
   @@index([payeeId])
@@ -444,6 +508,8 @@ model User {
   role         UserRole  @default(STAFF)
   isActive     Boolean   @default(true)
   lastLoginAt  DateTime?
+
+  companies    Company[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

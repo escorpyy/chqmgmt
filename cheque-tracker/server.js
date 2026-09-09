@@ -10,8 +10,10 @@ import { Prisma } from '@prisma/client';
 
 import { prisma } from './lib/prisma.js';
 import { requireAuth, requireAdmin } from './lib/auth.js';
+import { loadCompanyScope, requireCompanyContext } from './lib/companyScope.js';
 import authRouter from './routes/auth.js';
 import usersRouter from './routes/users.js';
+import companiesRouter from './routes/companies.js';
 import partiesRouter from './routes/parties.js';
 import banksRouter from './routes/banks.js';
 import staffRouter from './routes/staff.js';
@@ -63,20 +65,22 @@ app.get('/api/health', async (req, res) => {
 
 // ---- Everything below requires a logged-in session ------------------------
 app.use('/api', requireAuth);
+app.use('/api', loadCompanyScope); // needed by /api/companies itself, so mounted before it
 
 app.use('/api/users', requireAdmin, usersRouter);
+app.use('/api/companies', companiesRouter); // no requireCompanyContext — this is how you select one
 
-// ---- API routes ----------------------------------------------------------
-app.use('/api/parties', partiesRouter);
-app.use('/api/banks', banksRouter);
-app.use('/api/staff', staffRouter);
-app.use('/api/company-bank-accounts', companyBankAccountsRouter);
-app.use('/api/fiscal-years', fiscalYearsRouter);
-app.use('/api/cheques', chequesRouter);
-app.use('/api/issued-cheques', issuedChequesRouter);
-app.use('/api/dashboard', dashboardRouter);
-app.use('/api/daily-balance', dailyBalanceRouter);
-app.use('/api/import-export', importExportRouter);
+// ---- Routes scoped to whichever company is currently selected -------------
+app.use('/api/parties', requireCompanyContext, partiesRouter);
+app.use('/api/banks', requireCompanyContext, banksRouter);
+app.use('/api/staff', requireCompanyContext, staffRouter);
+app.use('/api/company-bank-accounts', requireCompanyContext, companyBankAccountsRouter);
+app.use('/api/fiscal-years', requireCompanyContext, fiscalYearsRouter);
+app.use('/api/cheques', requireCompanyContext, chequesRouter);
+app.use('/api/issued-cheques', requireCompanyContext, issuedChequesRouter);
+app.use('/api/dashboard', requireCompanyContext, dashboardRouter);
+app.use('/api/daily-balance', requireCompanyContext, dailyBalanceRouter);
+app.use('/api/import-export', requireCompanyContext, importExportRouter);
 
 // ---- Static frontend ------------------------------------------------------
 app.use(express.static(path.join(__dirname, 'public')));

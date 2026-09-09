@@ -6,6 +6,7 @@ import {
   CHEQUE_STATUSES, CLEARANCE_METHODS, FOLLOWUP_RESPONSES, RETURN_REASONS,
   PAYMENT_METHODS, PARTY_TYPES, isValidEnum, parseDateOrNull, isPositiveAmount,
 } from '../lib/enums.js';
+import { companyWhere, requireSingleCompany } from '../lib/companyScope.js';
 
 const router = Router();
 
@@ -26,6 +27,7 @@ const chequeInclude = {
 router.get('/', asyncHandler(async (req, res) => {
   const { status, search, includeDeleted } = req.query;
   const where = {
+    ...companyWhere(req),
     ...(includeDeleted === 'true' ? {} : { deletedAt: null }),
     ...(status ? { status } : {}),
     ...(search
@@ -50,8 +52,8 @@ router.get('/', asyncHandler(async (req, res) => {
 
 // GET /api/cheques/:id
 router.get('/:id', asyncHandler(async (req, res) => {
-  const cheque = await prisma.cheque.findUnique({
-    where: { id: req.params.id },
+  const cheque = await prisma.cheque.findFirst({
+    where: { id: req.params.id, ...companyWhere(req) },
     include: chequeInclude,
   });
   if (!cheque) return res.status(404).json({ error: 'Cheque not found' });
@@ -60,6 +62,8 @@ router.get('/:id', asyncHandler(async (req, res) => {
 
 // POST /api/cheques
 router.post('/', asyncHandler(async (req, res) => {
+  const companyId = requireSingleCompany(req, res);
+  if (!companyId) return;
   const {
     fiscalYearId, receiptNo, refNo, issuerId, issuedOn, issuedOnType, payableToCompany,
     chqDate, chqNo, bankId, presentedBankId, amount, staffId,
@@ -81,10 +85,27 @@ router.post('/', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'chqDate is not a valid date' });
   }
 
+  // Referenced fiscal year / issuer / bank(s) / staff must all belong to
+  // the same company as the cheque itself — otherwise data from one
+  // company's ecosystem could leak into another's via a foreign key.
+  const [fy, issuer, bank, presentedBank, staff] = await Promise.all([
+    prisma.fiscalYear.findFirst({ where: { id: fiscalYearId, companyId } }),
+    prisma.party.findFirst({ where: { id: issuerId, companyId } }),
+    prisma.bank.findFirst({ where: { id: bankId, companyId } }),
+    presentedBankId ? prisma.bank.findFirst({ where: { id: presentedBankId, companyId } }) : null,
+    staffId ? prisma.staff.findFirst({ where: { id: staffId, companyId } }) : null,
+  ]);
+  if (!fy) return res.status(400).json({ error: 'fiscalYearId does not belong to the selected company' });
+  if (!issuer) return res.status(400).json({ error: 'issuerId does not belong to the selected company' });
+  if (!bank) return res.status(400).json({ error: 'bankId does not belong to the selected company' });
+  if (presentedBankId && !presentedBank) return res.status(400).json({ error: 'presentedBankId does not belong to the selected company' });
+  if (staffId && !staff) return res.status(400).json({ error: 'staffId does not belong to the selected company' });
+
   // payableToCompany is only meaningful when issuedOnType is FIRM; force it
   // to false for INDIVIDUAL payees rather than trusting the client to omit it.
   const cheque = await prisma.cheque.create({
     data: {
+      companyId,
       fiscalYearId,
       receiptNo: receiptNo || null,
       refNo,
@@ -121,7 +142,7 @@ router.patch('/:id', asyncHandler(async (req, res) => {
   } = req.body;
 
   const existing = await prisma.cheque.findFirst({
-    where: { id: req.params.id, deletedAt: null },
+    where: { id: req.params.id, deletedAt: null, ...companyWhere(req) },
     include: { payments: true },
   });
   if (!existing) return res.status(404).json({ error: 'Cheque not found' });
@@ -154,6 +175,18 @@ router.patch('/:id', asyncHandler(async (req, res) => {
   if (issuedOnType !== undefined && !isValidEnum(issuedOnType, PARTY_TYPES)) {
     return res.status(400).json({ error: `issuedOnType must be one of: ${PARTY_TYPES.join(', ')}` });
   }
+
+  // Any changed foreign keys must still point within this cheque's own company.
+  const [newBank, newPresentedBank, newStaff, newFy] = await Promise.all([
+    bankId !== undefined ? prisma.bank.findFirst({ where: { id: bankId, companyId: existing.companyId } }) : true,
+    presentedBankId ? prisma.bank.findFirst({ where: { id: presentedBankId, companyId: existing.companyId } }) : true,
+    staffId ? prisma.staff.findFirst({ where: { id: staffId, companyId: existing.companyId } }) : true,
+    fiscalYearId !== undefined ? prisma.fiscalYear.findFirst({ where: { id: fiscalYearId, companyId: existing.companyId } }) : true,
+  ]);
+  if (bankId !== undefined && !newBank) return res.status(400).json({ error: 'bankId does not belong to this cheque\'s company' });
+  if (presentedBankId && !newPresentedBank) return res.status(400).json({ error: 'presentedBankId does not belong to this cheque\'s company' });
+  if (staffId && !newStaff) return res.status(400).json({ error: 'staffId does not belong to this cheque\'s company' });
+  if (fiscalYearId !== undefined && !newFy) return res.status(400).json({ error: 'fiscalYearId does not belong to this cheque\'s company' });
 
   const cheque = await prisma.cheque.update({
     where: { id: req.params.id },
@@ -196,7 +229,7 @@ router.patch('/:id/status', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: `returnReason must be one of: ${RETURN_REASONS.join(', ')}` });
   }
 
-  const existing = await prisma.cheque.findFirst({ where: { id: req.params.id, deletedAt: null } });
+  const existing = await prisma.cheque.findFirst({ where: { id: req.params.id, deletedAt: null, ...companyWhere(req) } });
   if (!existing) return res.status(404).json({ error: 'Cheque not found' });
 
   let newStatusDate = new Date();
@@ -225,7 +258,7 @@ router.patch('/:id/status', asyncHandler(async (req, res) => {
 // POST /api/cheques/:id/replace — create a replacement cheque for a returned one
 router.post('/:id/replace', asyncHandler(async (req, res) => {
   const original = await prisma.cheque.findFirst({
-    where: { id: req.params.id, deletedAt: null },
+    where: { id: req.params.id, deletedAt: null, ...companyWhere(req) },
     include: { replacedBy: true },
   });
   if (!original) return res.status(404).json({ error: 'Original cheque not found' });
@@ -249,6 +282,7 @@ router.post('/:id/replace', asyncHandler(async (req, res) => {
 
   const replacement = await prisma.cheque.create({
     data: {
+      companyId: original.companyId,
       fiscalYearId: original.fiscalYearId,
       receiptNo: original.receiptNo,
       refNo: refNo ?? original.refNo,
@@ -286,7 +320,7 @@ router.post('/:id/followups', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'followUpDate is not a valid date' });
   }
 
-  const cheque = await prisma.cheque.findFirst({ where: { id: req.params.id, deletedAt: null } });
+  const cheque = await prisma.cheque.findFirst({ where: { id: req.params.id, deletedAt: null, ...companyWhere(req) } });
   if (!cheque) return res.status(404).json({ error: 'Cheque not found' });
 
   // Create the follow-up and, if applicable, move the cheque into the
@@ -335,7 +369,7 @@ router.post('/:id/payments', asyncHandler(async (req, res) => {
   }
 
   const cheque = await prisma.cheque.findFirst({
-    where: { id: req.params.id, deletedAt: null },
+    where: { id: req.params.id, deletedAt: null, ...companyWhere(req) },
     include: { payments: true },
   });
   if (!cheque) return res.status(404).json({ error: 'Cheque not found' });
@@ -389,7 +423,7 @@ router.post('/:id/checklogs', asyncHandler(async (req, res) => {
   if (!reason) return res.status(400).json({ error: 'reason is required' });
 
   const cheque = await prisma.cheque.findFirst({
-    where: { id: req.params.id, deletedAt: null },
+    where: { id: req.params.id, deletedAt: null, ...companyWhere(req) },
     include: { checkLogs: { where: { resolvedAt: null } } },
   });
   if (!cheque) return res.status(404).json({ error: 'Cheque not found' });
@@ -424,7 +458,7 @@ router.patch('/:id/checklogs/:checkLogId/resolve', asyncHandler(async (req, res)
     return res.status(400).json({ error: `resolvedStatus must be one of: ${CHEQUE_STATUSES.filter((s) => s !== 'ON_CHECK').join(', ')}` });
   }
 
-  const cheque = await prisma.cheque.findFirst({ where: { id: req.params.id, deletedAt: null } });
+  const cheque = await prisma.cheque.findFirst({ where: { id: req.params.id, deletedAt: null, ...companyWhere(req) } });
   if (!cheque) return res.status(404).json({ error: 'Cheque not found' });
 
   // Must belong to THIS cheque — previously :id and :checkLogId were never
@@ -458,6 +492,8 @@ router.patch('/:id/checklogs/:checkLogId/resolve', asyncHandler(async (req, res)
 
 // DELETE /api/cheques/:id  (soft delete)
 router.delete('/:id', asyncHandler(async (req, res) => {
+  const existing = await prisma.cheque.findFirst({ where: { id: req.params.id, ...companyWhere(req) } });
+  if (!existing) return res.status(404).json({ error: 'Cheque not found' });
   const cheque = await prisma.cheque.update({
     where: { id: req.params.id },
     data: { deletedAt: new Date() },

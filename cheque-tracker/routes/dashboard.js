@@ -1,38 +1,41 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
+import { companyWhere } from '../lib/companyScope.js';
 
 const router = Router();
 
 router.get('/summary', asyncHandler(async (req, res) => {
+  const scope = companyWhere(req);
+
   const [receivedByStatus, issuedByStatus, receivedTotals, issuedTotals] = await Promise.all([
     prisma.cheque.groupBy({
       by: ['status'],
-      where: { deletedAt: null },
+      where: { deletedAt: null, ...scope },
       _count: { _all: true },
       _sum: { amount: true },
     }),
     prisma.issuedCheque.groupBy({
       by: ['status'],
-      where: { deletedAt: null },
+      where: { deletedAt: null, ...scope },
       _count: { _all: true },
       _sum: { amount: true },
     }),
     prisma.cheque.aggregate({
-      where: { deletedAt: null },
+      where: { deletedAt: null, ...scope },
       _count: { _all: true },
       _sum: { amount: true },
     }),
     prisma.issuedCheque.aggregate({
-      where: { deletedAt: null },
+      where: { deletedAt: null, ...scope },
       _count: { _all: true },
       _sum: { amount: true },
     }),
   ]);
 
   const onCheck = await Promise.all([
-    prisma.chequeCheckLog.count({ where: { resolvedAt: null } }),
-    prisma.issuedChequeCheckLog.count({ where: { resolvedAt: null } }),
+    prisma.chequeCheckLog.count({ where: { resolvedAt: null, cheque: scope } }),
+    prisma.issuedChequeCheckLog.count({ where: { resolvedAt: null, issuedCheque: scope } }),
   ]);
 
   res.json({

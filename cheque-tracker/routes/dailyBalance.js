@@ -2,6 +2,7 @@ import { Router } from 'express';
 import ExcelJS from 'exceljs';
 import { prisma } from '../lib/prisma.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
+import { companyWhere, requireSingleCompany } from '../lib/companyScope.js';
 
 const router = Router();
 
@@ -19,21 +20,22 @@ function endOfDay(date) {
 // Builds the full per-account balance picture for one day:
 //   opening balance + received today (both manual, from DailyBankBalance)
 //   minus cheques due (computed live from IssuedCheque, not stored)
-async function computeBalances(date) {
+async function computeBalances(date, scope) {
   const cutoff = endOfDay(date);
 
   const [accounts, entries, dueByAccount] = await Promise.all([
     prisma.companyBankAccount.findMany({
+      where: scope,
       include: { bank: true },
       orderBy: { accountName: 'asc' },
     }),
-    prisma.dailyBankBalance.findMany({ where: { date } }),
+    prisma.dailyBankBalance.findMany({ where: { date, companyBankAccount: scope } }),
     // "Due" = every still-outstanding issued cheque with chqDate on or
     // before this day, however old, as long as it hasn't been cancelled,
     // cleared, returned, or stopped — those no longer threaten the balance.
     prisma.issuedCheque.groupBy({
       by: ['companyBankAccountId'],
-      where: { chqDate: { lte: cutoff }, status: 'ISSUED', deletedAt: null },
+      where: { chqDate: { lte: cutoff }, status: 'ISSUED', deletedAt: null, ...scope },
       _sum: { amount: true },
     }),
   ]);
@@ -74,12 +76,14 @@ async function computeBalances(date) {
 
 router.get('/', asyncHandler(async (req, res) => {
   const date = parseDateParam(req.query.date);
-  res.json(await computeBalances(date));
+  res.json(await computeBalances(date, companyWhere(req)));
 }));
 
 // Upsert the morning's manual entry (opening balance / received today) for
 // one account on one date. Either field may be sent alone.
 router.put('/:companyBankAccountId', asyncHandler(async (req, res) => {
+  const companyId = requireSingleCompany(req, res);
+  if (!companyId) return;
   const { companyBankAccountId } = req.params;
   const date = parseDateParam(req.body.date);
   const { openingBalance, receivedToday } = req.body;
@@ -87,6 +91,9 @@ router.put('/:companyBankAccountId', asyncHandler(async (req, res) => {
   if (openingBalance === undefined && receivedToday === undefined) {
     return res.status(400).json({ error: 'openingBalance and/or receivedToday is required' });
   }
+
+  const account = await prisma.companyBankAccount.findFirst({ where: { id: companyBankAccountId, companyId } });
+  if (!account) return res.status(404).json({ error: 'Company bank account not found' });
 
   const existing = await prisma.dailyBankBalance.findUnique({
     where: { companyBankAccountId_date: { companyBankAccountId, date } },
@@ -111,7 +118,7 @@ router.put('/:companyBankAccountId', asyncHandler(async (req, res) => {
 
 router.get('/export', asyncHandler(async (req, res) => {
   const date = parseDateParam(req.query.date);
-  const { rows, totals } = await computeBalances(date);
+  const { rows, totals } = await computeBalances(date, companyWhere(req));
 
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet('Daily Balance');

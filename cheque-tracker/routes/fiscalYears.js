@@ -1,11 +1,13 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
+import { companyWhere, requireSingleCompany } from '../lib/companyScope.js';
 
 const router = Router();
 
 router.get('/', asyncHandler(async (req, res) => {
   const fiscalYears = await prisma.fiscalYear.findMany({
+    where: companyWhere(req),
     include: { _count: { select: { cheques: true } } },
     orderBy: { year: 'desc' },
   });
@@ -13,8 +15,8 @@ router.get('/', asyncHandler(async (req, res) => {
 }));
 
 router.get('/:id', asyncHandler(async (req, res) => {
-  const fiscalYear = await prisma.fiscalYear.findUnique({
-    where: { id: req.params.id },
+  const fiscalYear = await prisma.fiscalYear.findFirst({
+    where: { id: req.params.id, ...companyWhere(req) },
     include: { cheques: { include: { issuer: true, bank: true } } },
   });
   if (!fiscalYear) return res.status(404).json({ error: 'Fiscal year not found' });
@@ -22,13 +24,17 @@ router.get('/:id', asyncHandler(async (req, res) => {
 }));
 
 router.post('/', asyncHandler(async (req, res) => {
+  const companyId = requireSingleCompany(req, res);
+  if (!companyId) return;
   const { year } = req.body;
   if (!year || !year.trim()) return res.status(400).json({ error: 'year is required' });
-  const fiscalYear = await prisma.fiscalYear.create({ data: { year: year.trim() } });
+  const fiscalYear = await prisma.fiscalYear.create({ data: { year: year.trim(), companyId } });
   res.status(201).json(fiscalYear);
 }));
 
 router.patch('/:id', asyncHandler(async (req, res) => {
+  const existing = await prisma.fiscalYear.findFirst({ where: { id: req.params.id, ...companyWhere(req) } });
+  if (!existing) return res.status(404).json({ error: 'Fiscal year not found' });
   const { year } = req.body;
   if (year !== undefined && !year.trim()) {
     return res.status(400).json({ error: 'year cannot be blank' });
@@ -41,6 +47,8 @@ router.patch('/:id', asyncHandler(async (req, res) => {
 }));
 
 router.delete('/:id', asyncHandler(async (req, res) => {
+  const existing = await prisma.fiscalYear.findFirst({ where: { id: req.params.id, ...companyWhere(req) } });
+  if (!existing) return res.status(404).json({ error: 'Fiscal year not found' });
   await prisma.fiscalYear.delete({ where: { id: req.params.id } });
   res.status(204).end();
 }));

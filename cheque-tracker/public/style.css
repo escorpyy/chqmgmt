@@ -190,6 +190,17 @@ button { font-family: var(--font-body); }
 .masthead-title p { margin: 0.15rem 0 0; color: var(--ink-soft); font-size: 0.85rem; font-style: italic; }
 
 .masthead-stats { display: flex; gap: 1.75rem; margin-left: auto; }
+.company-switcher { margin-left: 1.5rem; }
+.company-switcher select#company-select {
+  font-family: inherit;
+  font-size: 0.85rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface-raise);
+  color: var(--ink);
+  max-width: 220px;
+}
 .stat { display: flex; flex-direction: column; }
 .stat-label { font-size: 0.72rem; color: var(--ink-soft); }
 .stat-value { font-family: var(--font-mono); font-size: 1.15rem; font-weight: 500; font-variant-numeric: tabular-nums; }

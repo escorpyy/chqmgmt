@@ -1,11 +1,13 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
+import { companyWhere, requireSingleCompany } from '../lib/companyScope.js';
 
 const router = Router();
 
 router.get('/', asyncHandler(async (req, res) => {
   const banks = await prisma.bank.findMany({
+    where: companyWhere(req),
     include: { _count: { select: { draweeCheques: true, presentedCheques: true, companyAccounts: true } } },
     orderBy: { name: 'asc' },
   });
@@ -13,8 +15,8 @@ router.get('/', asyncHandler(async (req, res) => {
 }));
 
 router.get('/:id', asyncHandler(async (req, res) => {
-  const bank = await prisma.bank.findUnique({
-    where: { id: req.params.id },
+  const bank = await prisma.bank.findFirst({
+    where: { id: req.params.id, ...companyWhere(req) },
     include: { companyAccounts: true },
   });
   if (!bank) return res.status(404).json({ error: 'Bank not found' });
@@ -22,13 +24,17 @@ router.get('/:id', asyncHandler(async (req, res) => {
 }));
 
 router.post('/', asyncHandler(async (req, res) => {
+  const companyId = requireSingleCompany(req, res);
+  if (!companyId) return;
   const { name, branch } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'name is required' });
-  const bank = await prisma.bank.create({ data: { name: name.trim(), branch } });
+  const bank = await prisma.bank.create({ data: { name: name.trim(), branch, companyId } });
   res.status(201).json(bank);
 }));
 
 router.patch('/:id', asyncHandler(async (req, res) => {
+  const existing = await prisma.bank.findFirst({ where: { id: req.params.id, ...companyWhere(req) } });
+  if (!existing) return res.status(404).json({ error: 'Bank not found' });
   const { name, branch } = req.body;
   if (name !== undefined && !name.trim()) {
     return res.status(400).json({ error: 'name cannot be blank' });
@@ -44,6 +50,8 @@ router.patch('/:id', asyncHandler(async (req, res) => {
 }));
 
 router.delete('/:id', asyncHandler(async (req, res) => {
+  const existing = await prisma.bank.findFirst({ where: { id: req.params.id, ...companyWhere(req) } });
+  if (!existing) return res.status(404).json({ error: 'Bank not found' });
   await prisma.bank.delete({ where: { id: req.params.id } });
   res.status(204).end();
 }));

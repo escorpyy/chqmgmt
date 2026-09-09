@@ -13,6 +13,7 @@ import { initBsDatePickers } from './bsDatePicker.js';
 import { initEditableSelects } from './combobox.js';
 import { initAutocomplete } from './autocomplete.js';
 import { initUsersTab } from './users.js';
+import { initCompanySwitcher } from './companySwitcher.js';
 
 // ============================================================================
 // Auth gate — every other module below assumes a valid session, so this
@@ -74,6 +75,12 @@ document.addEventListener('keydown', (e) => {
   initEditableSelects(document);
   initAutocomplete(document); // e.g. the toolbar search/filter fields, present at load
   await checkHealth();
+
+  // Blocks (via a required modal, for a brand-new user) until a company is
+  // selected in session — every company-scoped API route below this point
+  // depends on that being in place already.
+  await initCompanySwitcher();
+
   try {
     await loadReferenceData();
   } catch (err) {
