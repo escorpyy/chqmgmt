@@ -3,7 +3,7 @@ import { toast } from './toast.js';
 import { state } from './state.js';
 import { openModal, closeModal, formError, clearFormError, openConfirmModal } from './modal.js';
 import { openDrawer, closeDrawer } from './drawer.js';
-import { escapeHtml, fmtDate, fmtDateStacked, fmtMoney, fmtDateInput, humanize, statusTag, selectOptions, enumOptions, debounce, daysSince, ageTag, paginationControls, wirePaginationControls } from './utils.js';
+import { escapeHtml, fmtDate, fmtDateStacked, fmtMoney, fmtDateInput, humanize, statusTag, selectOptions, enumOptions, debounce, ageTag, paginationControls, wirePaginationControls } from './utils.js';
 import { RECEIVED_STATUSES, FOLLOWUP_RESPONSES, RETURN_REASONS, PAYMENT_METHODS, CLEARANCE_METHODS, PARTY_TYPES } from './constants.js';
 import { loadDashboard } from './dashboard.js';
 import { syncEditableSelect } from './combobox.js';
@@ -13,13 +13,32 @@ import { syncEditableSelect } from './combobox.js';
 // ============================================================================
 const PAGE_SIZE = 50;
 let receivedPage = 1;
+let fyFilterPopulated = false;
+
+// The fiscal-year filter is populated from state.fiscalYears, which is
+// loaded once at startup (referenceData.js) — safe to rebuild every time
+// loadReceived runs, but we only need to do it once since the list of
+// fiscal years doesn't change within a session except via the Fiscal Years
+// admin screen, which isn't open at the same time as this tab.
+function populateFyFilter() {
+  const select = document.getElementById('received-fy-filter');
+  if (fyFilterPopulated || !state.fiscalYears.length) return;
+  const current = select.value;
+  select.innerHTML = `<option value="">All fiscal years</option>` +
+    state.fiscalYears.map((f) => `<option value="${f.id}">${escapeHtml(f.year)}</option>`).join('');
+  select.value = current;
+  fyFilterPopulated = true;
+}
 
 export async function loadReceived(page = receivedPage) {
+  populateFyFilter();
   const search = document.getElementById('received-search').value;
   const status = document.getElementById('received-status-filter').value;
+  const fiscalYearId = document.getElementById('received-fy-filter').value;
   const params = new URLSearchParams();
   if (search) params.set('search', search);
   if (status) params.set('status', status);
+  if (fiscalYearId) params.set('fiscalYearId', fiscalYearId);
   params.set('page', page);
   params.set('pageSize', PAGE_SIZE);
 
@@ -39,30 +58,35 @@ function renderReceivedTable(cheques, total, page) {
     return;
   }
   el.innerHTML = `
-    <table class="ledger ledger-compact">
+    <table class="ledger ledger-compact ledger-centered">
       <thead><tr>
-        <th>Cheque no</th><th>Cheque date</th><th>Received date</th><th>Party / customer</th>
-        <th>Bank name</th><th>Branch</th><th>Account no.</th><th>Amount</th>
-        <th>Deposit date</th><th>Clearance date</th><th>Status</th><th>Status date</th>
+        <th>Cheque no</th><th>Cheque date</th><th>Party / customer</th>
+        <th>Bank name</th><th>Amount</th>
+        <th>Status</th><th>Status date</th>
         <th>Days pending</th><th>Actions</th>
       </tr></thead>
       <tbody>
         ${cheques.map((c) => {
-          // Days pending: fixed once cleared (totalDays, captured at clearance),
-          // otherwise live — days since the current status began.
-          const pendingDays = c.status === 'CLEARED' ? c.totalDays : daysSince(c.statusDate);
+          // Days pending = chqDate -> statusDate, in whole days. This is
+          // computeTotalDays() from the server (lib/chequeHelpers.js),
+          // recalculated every time status/statusDate changes there — so
+          // it's always "how long this cheque took to reach its current
+          // status", not a live now-based count, and it's consistent
+          // whether the cheque is still open or already CLEARED.
+          const pendingDays = c.totalDays;
           return `
           <tr data-id="${c.id}">
             <td class="num">${escapeHtml(c.chqNo)}</td>
             <td class="num">${fmtDateStacked(c.chqDate)}</td>
-            <td class="num">${fmtDateStacked(c.createdAt)}</td>
-            <td>${escapeHtml(c.issuer?.name || '—')}</td>
-            <td>${escapeHtml(c.bank?.name || '—')}</td>
-            <td>${escapeHtml(c.bank?.branch || '—')}</td>
-            <td class="num">${escapeHtml(c.accountNo || '—')}</td>
+            <td>
+              <div>${escapeHtml(c.issuer?.name || '—')}</div>
+              <div class="muted cell-sub">${escapeHtml(c.receiptNo || '—')} · Ref: ${escapeHtml(c.refNo || '—')}</div>
+            </td>
+            <td>
+              <div>${escapeHtml(c.bank?.name || '—')}</div>
+              <div class="muted cell-sub">${escapeHtml(c.bank?.branch || '—')} · A/C: ${escapeHtml(c.accountNo || '—')}</div>
+            </td>
             <td class="amount">${fmtMoney(c.amount)}</td>
-            <td class="num">${fmtDateStacked(c.depositedAt)}</td>
-            <td class="num">${fmtDateStacked(c.clearedAt)}</td>
             <td>${statusTag(c.status)}</td>
             <td class="num">${fmtDateStacked(c.statusDate)}</td>
             <td>${ageTag(pendingDays)}</td>
@@ -89,6 +113,7 @@ function renderReceivedTable(cheques, total, page) {
 
 document.getElementById('received-search').addEventListener('input', debounce(() => loadReceived(1), 300));
 document.getElementById('received-status-filter').addEventListener('change', () => loadReceived(1));
+document.getElementById('received-fy-filter').addEventListener('change', () => loadReceived(1));
 
 document.getElementById('btn-new-cheque').addEventListener('click', () => openNewChequeModal());
 
@@ -187,6 +212,43 @@ export async function openChequeDetail(id) {
   }
 }
 
+// Log of "what happened when" for the drawer's Status history section.
+// Built from the per-stage timestamps stamped by receivedStageTimestampFields
+// (lib/chequeHelpers.js) — c.createdAt covers the initial recording, and
+// each of depositedAt/presentedAt/clearedAt/bouncedAt/cancelledAt is set
+// once, the first time the cheque enters that stage, and never overwritten
+// after. Any of these can be missing (a cheque still PENDING has only
+// "Recorded"), so this only lists the stages that actually happened.
+function renderStatusHistory(c) {
+  const stages = [
+    { label: 'Recorded', date: c.createdAt },
+    { label: 'Deposited', date: c.depositedAt },
+    { label: 'Presented', date: c.presentedAt },
+    { label: 'Cleared', date: c.clearedAt },
+    { label: 'Returned', date: c.bouncedAt },
+    { label: 'Cancelled', date: c.cancelledAt },
+  ].filter((s) => s.date).sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  // PENDING/FOLLOWUP/ON_CHECK don't stamp a dedicated stage column (they're
+  // transient/investigative, see receivedStageTimestampFields), so without
+  // this the log would go silent while the cheque sits in one of those —
+  // show the current status/statusDate explicitly in that case.
+  const currentIsUnstamped = !['DEPOSITED', 'PRESENTED', 'CLEARED', 'RETURNED', 'CANCELLED'].includes(c.status);
+
+  if (!stages.length && !currentIsUnstamped) {
+    return `<p class="timeline-empty">No status changes recorded yet.</p>`;
+  }
+
+  return stages.map((s) => `
+    <div class="timeline-item">
+      <div class="ti-head"><span>${s.label}</span><span class="ti-meta">${fmtDate(s.date)}</span></div>
+    </div>`).join('') + (currentIsUnstamped ? `
+    <div class="timeline-item">
+      <div class="ti-head"><span>${humanize(c.status)}</span><span class="ti-meta">${fmtDate(c.statusDate)}</span></div>
+      ${c.previousStatus ? `<div class="ti-meta">Previously: ${humanize(c.previousStatus)}</div>` : ''}
+    </div>` : '');
+}
+
 function renderChequeDrawer(c) {
   const canFollowUp = ['PENDING', 'FOLLOWUP'].includes(c.status);
   const canPay = !['CLEARED'].includes(c.status);
@@ -219,6 +281,11 @@ function renderChequeDrawer(c) {
       ${c.replaces ? `<div class="detail-field"><dt>Replaces</dt><dd class="num">${escapeHtml(c.replaces.chqNo)}</dd></div>` : ''}
       ${c.replacedBy ? `<div class="detail-field"><dt>Replaced by</dt><dd class="num">${escapeHtml(c.replacedBy.chqNo)}</dd></div>` : ''}
     </dl>
+
+    <div class="section-title">Status history</div>
+    <div class="timeline">
+      ${renderStatusHistory(c)}
+    </div>
 
     <div class="action-row">
       <button class="btn btn-sm" data-action="status">Change status</button>

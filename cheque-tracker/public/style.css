@@ -315,6 +315,36 @@ main:has(#panel-issued.active) {
   color: var(--ink);
 }
 .toolbar input[type="search"] { flex: 1; max-width: 320px; }
+
+/* Fiscal-year filter — deliberately styled bigger/heavier than the toolbar
+   filters below it, since FY is the primary top-level split for a register
+   (everything else is a secondary refinement within a year). */
+.fy-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.85rem;
+}
+.fy-filter-bar label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+.fy-filter-bar .fy-select {
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 0.55rem 0.9rem;
+  border: 1px solid var(--ink);
+  border-radius: var(--radius);
+  background: var(--surface-raise);
+  color: var(--ink);
+  min-width: 220px;
+}
+.fy-filter-bar .fy-select:focus {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
 .checkbox-field {
   display: flex;
   align-items: center;
@@ -368,6 +398,29 @@ table.ledger.ledger-compact .date-stack { line-height: 1.25; }
 table.ledger.ledger-compact .date-stack .date-bs { font-size: 0.82rem; }
 table.ledger.ledger-compact .date-stack .date-ad { font-size: 0.72rem; }
 table.ledger.ledger-compact .btn-sm { padding: 0.22rem 0.5rem; font-size: 0.72rem; }
+
+/* Full-grid, center-aligned variant — every cell gets a border on all four
+   sides and its content centered, instead of the default open-ledger look
+   (horizontal rules only, left-aligned). Opt-in via an extra class so the
+   plain .ledger look used elsewhere is unaffected. */
+table.ledger.ledger-centered {
+  border: 1px solid var(--ink);
+}
+table.ledger.ledger-centered th,
+table.ledger.ledger-centered td {
+  text-align: center;
+  border: 1px solid var(--line);
+}
+table.ledger.ledger-centered thead th {
+  border-bottom: 1px solid var(--ink);
+}
+table.ledger.ledger-centered .date-stack { align-items: center; }
+table.ledger.ledger-centered .amount { text-align: center; }
+table.ledger.ledger-centered .cell-sub {
+  display: block;
+  font-size: 0.74rem;
+  margin-top: 0.15rem;
+}
 
 .pagination {
   display: flex;

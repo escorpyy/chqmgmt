@@ -28,13 +28,14 @@ const chequeInclude = {
 // status may be a comma-separated list ("PENDING,FOLLOWUP"); sort is
 // "field:asc|desc" for chqDate, amount, or chqNo (defaults to chqDate desc).
 router.get('/', asyncHandler(async (req, res) => {
-  const { status, search, includeDeleted, sort } = req.query;
+  const { status, search, includeDeleted, sort, fiscalYearId } = req.query;
   const { page, pageSize, skip, take } = parsePagination(req.query);
 
   const where = {
     ...companyWhere(req),
     ...(includeDeleted === 'true' ? {} : { deletedAt: null }),
     ...statusWhereFragment(status, CHEQUE_STATUSES),
+    ...(fiscalYearId ? { fiscalYearId } : {}),
     ...(search
       ? {
           OR: [
