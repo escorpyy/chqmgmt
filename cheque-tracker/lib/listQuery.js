@@ -24,12 +24,16 @@ export function statusWhereFragment(statusParam, validValues) {
 
 // sort param shape: "field:asc" or "field:desc". Only fields in
 // allowedFields are honored; anything else (or malformed input) falls back
-// to defaultOrderBy rather than throwing on a bad query string.
+// to defaultOrderBy rather than throwing on a bad query string. A field may
+// be a plain scalar ("chqDate") or a dotted relation path ("issuer.name"),
+// which becomes a nested Prisma orderBy ({ issuer: { name: dir } }).
 export function parseSort(sortParam, allowedFields, defaultOrderBy) {
   if (!sortParam) return defaultOrderBy;
   const [field, dir] = sortParam.split(':');
-  if (allowedFields.includes(field) && (dir === 'asc' || dir === 'desc')) {
-    return { [field]: dir };
+  if (!allowedFields.includes(field) || (dir !== 'asc' && dir !== 'desc')) return defaultOrderBy;
+  if (field.includes('.')) {
+    const [relation, subField] = field.split('.');
+    return { [relation]: { [subField]: dir } };
   }
-  return defaultOrderBy;
+  return { [field]: dir };
 }

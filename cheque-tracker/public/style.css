@@ -316,6 +316,7 @@ main:has(#panel-issued.active) {
 }
 .toolbar input[type="search"] { flex: 1; max-width: 320px; }
 
+<<<<<<< ours
 /* Fiscal-year filter — deliberately styled bigger/heavier than the toolbar
    filters below it, since FY is the primary top-level split for a register
    (everything else is a secondary refinement within a year). */
@@ -335,16 +336,113 @@ main:has(#panel-issued.active) {
   font-size: 0.95rem;
   font-weight: 600;
   padding: 0.55rem 0.9rem;
+=======
+/* Received cheques — filter strip stays a thin band, table gets the rest
+   of the panel's height. #panel-received gets a viewport-based height so
+   there's an actual "rest of the height" for the table wrap to flex into;
+   200px is masthead + tabs + panel-head, adjust here if that chrome grows. */
+#panel-received.active {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 200px);
+}
+.received-layout {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.received-filters {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding-bottom: 0.75rem;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid var(--line);
+}
+.filters-left {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 1 1 auto;
+}
+.filters-left input[type="search"],
+.filters-left select {
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raise);
+  color: var(--ink);
+}
+.filters-left input[type="search"] { flex: 1; max-width: 320px; }
+.filters-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+  flex: 0 0 auto;
+}
+.date-range-filter {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.date-range-filter input[type="date"] {
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raise);
+  color: var(--ink);
+}
+.date-range-sep { font-size: 0.78rem; color: var(--ink-soft); }
+.received-filters .fy-select {
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.4rem 0.7rem;
+>>>>>>> theirs
   border: 1px solid var(--ink);
   border-radius: var(--radius);
   background: var(--surface-raise);
   color: var(--ink);
+<<<<<<< ours
   min-width: 220px;
 }
 .fy-filter-bar .fy-select:focus {
   outline: 2px solid var(--brand);
   outline-offset: 1px;
 }
+=======
+  min-width: 200px;
+}
+.received-filters .fy-select:focus,
+.date-range-filter input:focus {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+.received-table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+>>>>>>> theirs
 .checkbox-field {
   display: flex;
   align-items: center;
@@ -421,6 +519,16 @@ table.ledger.ledger-centered .cell-sub {
   font-size: 0.74rem;
   margin-top: 0.15rem;
 }
+<<<<<<< ours
+=======
+table.ledger.ledger-centered th.sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+table.ledger.ledger-centered th.sortable:hover { color: var(--ink); background: var(--brand-tint); }
+table.ledger.ledger-centered th.sort-active { color: var(--brand-dark); }
+>>>>>>> theirs
 
 .pagination {
   display: flex;

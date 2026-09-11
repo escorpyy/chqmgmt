@@ -27,27 +27,54 @@ const chequeInclude = {
 // GET /api/cheques?status=PENDING&search=abc&page=1&pageSize=50
 // status may be a comma-separated list ("PENDING,FOLLOWUP"); sort is
 // "field:asc|desc" for chqDate, amount, or chqNo (defaults to chqDate desc).
+// dateFrom/dateTo filter on chqDate (inclusive), either end optional.
 router.get('/', asyncHandler(async (req, res) => {
+<<<<<<< ours
   const { status, search, includeDeleted, sort, fiscalYearId } = req.query;
+=======
+  const { status, search, includeDeleted, sort, fiscalYearId, dateFrom, dateTo } = req.query;
+>>>>>>> theirs
   const { page, pageSize, skip, take } = parsePagination(req.query);
+
+  const parsedFrom = parseDateOrNull(dateFrom);
+  const parsedTo = parseDateOrNull(dateTo);
 
   const where = {
     ...companyWhere(req),
     ...(includeDeleted === 'true' ? {} : { deletedAt: null }),
     ...statusWhereFragment(status, CHEQUE_STATUSES),
     ...(fiscalYearId ? { fiscalYearId } : {}),
+<<<<<<< ours
+=======
+    ...((parsedFrom || parsedTo)
+      ? { chqDate: { ...(parsedFrom ? { gte: parsedFrom } : {}), ...(parsedTo ? { lte: parsedTo } : {}) } }
+      : {}),
+>>>>>>> theirs
     ...(search
       ? {
           OR: [
             { chqNo: { contains: search, mode: 'insensitive' } },
             { refNo: { contains: search, mode: 'insensitive' } },
+            { receiptNo: { contains: search, mode: 'insensitive' } },
+            { accountNo: { contains: search, mode: 'insensitive' } },
             { issuedOn: { contains: search, mode: 'insensitive' } },
             { issuer: { name: { contains: search, mode: 'insensitive' } } },
+            { bank: { name: { contains: search, mode: 'insensitive' } } },
+            { bank: { branch: { contains: search, mode: 'insensitive' } } },
           ],
         }
       : {}),
   };
-  const orderBy = parseSort(sort, ['chqDate', 'amount', 'chqNo'], { chqDate: 'desc' });
+  // Every text column actually shown in the register is searchable above
+  // (cheque no, ref no, receipt no, account no, payee-on-cheque, issuer
+  // name, bank name/branch). Amount, status and the date columns are left
+  // out of free-text search on purpose — those are numeric/enum/date
+  // values, better filtered via the dedicated status/date-range/FY filters
+  // than matched as substrings.
+  const orderBy = parseSort(sort, [
+    'chqDate', 'amount', 'chqNo', 'status', 'statusDate', 'totalDays',
+    'receiptNo', 'refNo', 'accountNo', 'issuer.name', 'bank.name',
+  ], { chqDate: 'desc' });
 
   const [cheques, total] = await Promise.all([
     prisma.cheque.findMany({

@@ -14,6 +14,34 @@ import { syncEditableSelect } from './combobox.js';
 const PAGE_SIZE = 50;
 let receivedPage = 1;
 let fyFilterPopulated = false;
+<<<<<<< ours
+=======
+let receivedSort = { field: 'chqDate', dir: 'desc' };
+
+// Column definitions for the sortable headers — label plus the backend
+// sort field (see the allowedFields list in routes/cheques.js; relation
+// fields use dot notation, e.g. "issuer.name"). `null` field = not sortable.
+const RECEIVED_COLUMNS = [
+  { label: 'Cheque no', field: 'chqNo' },
+  { label: 'Cheque date', field: 'chqDate' },
+  { label: 'Party / customer', field: 'issuer.name' },
+  { label: 'Bank name', field: 'bank.name' },
+  { label: 'Amount', field: 'amount' },
+  { label: 'Status', field: 'status' },
+  { label: 'Status date', field: 'statusDate' },
+  { label: 'Days pending', field: 'totalDays' },
+  { label: 'Actions', field: null },
+];
+
+function sortableHeaderRow() {
+  return RECEIVED_COLUMNS.map(({ label, field }) => {
+    if (!field) return `<th>${label}</th>`;
+    const active = receivedSort.field === field;
+    const arrow = active ? (receivedSort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+    return `<th class="sortable${active ? ' sort-active' : ''}" data-sort-field="${field}">${label}${arrow}</th>`;
+  }).join('');
+}
+>>>>>>> theirs
 
 // The fiscal-year filter is populated from state.fiscalYears, which is
 // loaded once at startup (referenceData.js) — safe to rebuild every time
@@ -35,10 +63,21 @@ export async function loadReceived(page = receivedPage) {
   const search = document.getElementById('received-search').value;
   const status = document.getElementById('received-status-filter').value;
   const fiscalYearId = document.getElementById('received-fy-filter').value;
+<<<<<<< ours
+=======
+  const dateFrom = document.getElementById('received-date-from').value;
+  const dateTo = document.getElementById('received-date-to').value;
+>>>>>>> theirs
   const params = new URLSearchParams();
   if (search) params.set('search', search);
   if (status) params.set('status', status);
   if (fiscalYearId) params.set('fiscalYearId', fiscalYearId);
+<<<<<<< ours
+=======
+  if (dateFrom) params.set('dateFrom', dateFrom);
+  if (dateTo) params.set('dateTo', dateTo);
+  params.set('sort', `${receivedSort.field}:${receivedSort.dir}`);
+>>>>>>> theirs
   params.set('page', page);
   params.set('pageSize', PAGE_SIZE);
 
@@ -59,12 +98,16 @@ function renderReceivedTable(cheques, total, page) {
   }
   el.innerHTML = `
     <table class="ledger ledger-compact ledger-centered">
+<<<<<<< ours
       <thead><tr>
         <th>Cheque no</th><th>Cheque date</th><th>Party / customer</th>
         <th>Bank name</th><th>Amount</th>
         <th>Status</th><th>Status date</th>
         <th>Days pending</th><th>Actions</th>
       </tr></thead>
+=======
+      <thead><tr>${sortableHeaderRow()}</tr></thead>
+>>>>>>> theirs
       <tbody>
         ${cheques.map((c) => {
           // Days pending = chqDate -> statusDate, in whole days. This is
@@ -96,6 +139,17 @@ function renderReceivedTable(cheques, total, page) {
       </tbody>
     </table>
     ${paginationControls(total, page, PAGE_SIZE)}`;
+  el.querySelectorAll('th[data-sort-field]').forEach((th) => {
+    th.addEventListener('click', () => {
+      const field = th.dataset.sortField;
+      if (receivedSort.field === field) {
+        receivedSort.dir = receivedSort.dir === 'asc' ? 'desc' : 'asc';
+      } else {
+        receivedSort = { field, dir: 'asc' };
+      }
+      loadReceived(1);
+    });
+  });
   el.querySelectorAll('tr[data-id]').forEach((row) => {
     row.addEventListener('click', (e) => {
       if (e.target.closest('.act-view')) return; // handled below, avoid double-fire
@@ -114,6 +168,11 @@ function renderReceivedTable(cheques, total, page) {
 document.getElementById('received-search').addEventListener('input', debounce(() => loadReceived(1), 300));
 document.getElementById('received-status-filter').addEventListener('change', () => loadReceived(1));
 document.getElementById('received-fy-filter').addEventListener('change', () => loadReceived(1));
+<<<<<<< ours
+=======
+document.getElementById('received-date-from').addEventListener('change', () => loadReceived(1));
+document.getElementById('received-date-to').addEventListener('change', () => loadReceived(1));
+>>>>>>> theirs
 
 document.getElementById('btn-new-cheque').addEventListener('click', () => openNewChequeModal());
 
