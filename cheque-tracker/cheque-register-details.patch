@@ -1,0 +1,4096 @@
+--- cheque-tracker/public/js/received.js
++++ cheque-tracker/public/js/received.js
+@@ -1,693 +1,671 @@
+-import { api } from './api.js';
+-import { toast } from './toast.js';
+-import { state } from './state.js';
+-import { openModal, closeModal, formError, clearFormError, openConfirmModal } from './modal.js';
+-import { openDrawer, closeDrawer } from './drawer.js';
+-import { escapeHtml, fmtDate, fmtMoney, fmtDateInput, humanize, statusTag, selectOptions, enumOptions, debounce, paginationControls, wirePaginationControls } from './utils.js';
+-import { RECEIVED_STATUSES, FOLLOWUP_RESPONSES, RETURN_REASONS, PAYMENT_METHODS, CLEARANCE_METHODS, PARTY_TYPES } from './constants.js';
+-import { loadDashboard } from './dashboard.js';
+-import { syncEditableSelect } from './combobox.js';
+-
+-// ============================================================================
+-// RECEIVED CHEQUES
+-// ============================================================================
+-const PAGE_SIZE = 50;
+-let receivedPage = 1;
+-
+-export async function loadReceived(page = receivedPage) {
+-  const search = document.getElementById('received-search').value;
+-  const status = document.getElementById('received-status-filter').value;
+-  const params = new URLSearchParams();
+-  if (search) params.set('search', search);
+-  if (status) params.set('status', status);
+-  params.set('page', page);
+-  params.set('pageSize', PAGE_SIZE);
+-
+-  try {
+-    const { cheques, total } = await api(`/cheques?${params.toString()}`);
+-    receivedPage = page;
+-    renderReceivedTable(cheques, total, page);
+-  } catch (err) {
+-    toast(err.message, 'error');
+-  }
+-}
+-
+-function renderReceivedTable(cheques, total, page) {
+-  const el = document.getElementById('received-table');
+-  if (!cheques.length) {
+-    el.innerHTML = `<table class="ledger"><tbody><tr class="empty-row"><td>No cheques match. Try clearing filters, or record a new cheque.</td></tr></tbody></table>`;
+-    return;
+-  }
+-  el.innerHTML = `
+-    <table class="ledger">
+-      <thead><tr>
+-        <th>Cheque no</th><th>Ref no</th><th>Issuer</th><th>Bank</th>
+-        <th>Cheque date</th><th>Amount</th><th>Status</th>
+-      </tr></thead>
+-      <tbody>
+-        ${cheques.map((c) => `
+-          <tr data-id="${c.id}">
+-            <td class="num">${escapeHtml(c.chqNo)}</td>
+-            <td class="num muted">${escapeHtml(c.refNo || '—')}</td>
+-            <td>${escapeHtml(c.issuer?.name || '—')}</td>
+-            <td>${escapeHtml(c.bank?.name || '—')}</td>
+-            <td>${fmtDate(c.chqDate)}</td>
+-            <td class="amount">${fmtMoney(c.amount)}</td>
+-            <td>${statusTag(c.status)}</td>
+-          </tr>`).join('')}
+-      </tbody>
+-    </table>
+-    ${paginationControls(total, page, PAGE_SIZE)}`;
+-  el.querySelectorAll('tr[data-id]').forEach((row) => {
+-    row.addEventListener('click', () => openChequeDetail(row.dataset.id));
+-  });
+-  wirePaginationControls(el, total, page, loadReceived, PAGE_SIZE);
+-}
+-
+-document.getElementById('received-search').addEventListener('input', debounce(() => loadReceived(1), 300));
+-document.getElementById('received-status-filter').addEventListener('change', () => loadReceived(1));
+-
+-document.getElementById('btn-new-cheque').addEventListener('click', () => openNewChequeModal());
+-
+-function openNewChequeModal() {
+-  const body = `
+-    <form id="form-new-cheque">
+-      <div class="form-error"></div>
+-      <div class="form-grid">
+-        <div class="field">
+-          <label>Fiscal year *</label>
+-          <select name="fiscalYearId" required>${selectOptions(state.fiscalYears, 'id', (f) => f.year, 'Select fiscal year…')}</select>
+-        </div>
+-        <div class="field">
+-          <label>Receipt no.</label>
+-          <input name="receiptNo" type="text" placeholder="UR-001">
+-        </div>
+-        <div class="field">
+-          <label>Ref no</label>
+-          <input name="refNo" type="text" placeholder="URT-001/01">
+-        </div>
+-        <div class="field">
+-          <label>Cheque no *</label>
+-          <input name="chqNo" type="text" required>
+-        </div>
+-        <div class="field span-2">
+-          <label>Issuer (party) *</label>
+-          <select name="issuerId" required>${selectOptions(state.parties, 'id', (p) => `${p.name} (${humanize(p.type)})`, 'Select issuer…')}</select>
+-        </div>
+-        <div class="field">
+-          <label>Payee name on cheque *</label>
+-          <input name="issuedOn" type="text" required>
+-        </div>
+-        <div class="field">
+-          <label>Payee type *</label>
+-          <select name="issuedOnType" required>${enumOptions(PARTY_TYPES)}</select>
+-        </div>
+-        <div class="field">
+-          <label>Cheque date *</label>
+-          <input name="chqDate" type="date" required>
+-        </div>
+-        <div class="field">
+-          <label>Amount *</label>
+-          <input name="amount" type="number" step="0.01" min="0.01" required>
+-        </div>
+-        <div class="field">
+-          <label>Drawee bank *</label>
+-          <select name="bankId" required>${selectOptions(state.banks, 'id', (b) => b.name, 'Select bank…')}</select>
+-        </div>
+-        <div class="field">
+-          <label>Presented at bank</label>
+-          <select name="presentedBankId">${selectOptions(state.banks, 'id', (b) => b.name, 'Same as drawee bank')}</select>
+-        </div>
+-        <div class="field span-2">
+-          <label>Handled by staff</label>
+-          <select name="staffId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
+-        </div>
+-      </div>
+-      <div class="form-actions">
+-        <button type="button" class="btn btn-ghost" id="cancel-new-cheque">Cancel</button>
+-        <button type="submit" class="btn btn-primary">Save cheque</button>
+-      </div>
+-    </form>`;
+-
+-  openModal('New received cheque', body, {
+-    onMount: () => {
+-      const form = document.getElementById('form-new-cheque');
+-      document.getElementById('cancel-new-cheque').addEventListener('click', closeModal);
+-      form.addEventListener('submit', async (e) => {
+-        e.preventDefault();
+-        clearFormError(form);
+-        const data = Object.fromEntries(new FormData(form).entries());
+-        try {
+-          await api('/cheques', { method: 'POST', body: JSON.stringify(data) });
+-          toast('Cheque recorded', 'success');
+-          closeModal();
+-          loadReceived();
+-          loadDashboard();
+-        } catch (err) {
+-          formError(form, err.message);
+-        }
+-      });
+-    },
+-  });
+-}
+-
+-export async function openChequeDetail(id) {
+-  try {
+-    const c = await api(`/cheques/${id}`);
+-    renderChequeDrawer(c);
+-  } catch (err) {
+-    toast(err.message, 'error');
+-  }
+-}
+-
+-function renderChequeDrawer(c) {
+-  const canFollowUp = ['PENDING', 'FOLLOWUP'].includes(c.status);
+-  const canPay = !['CLEARED'].includes(c.status);
+-  const canCheckLog = c.status !== 'ON_CHECK';
+-  const canReplace = c.status === 'RETURNED' && !c.replacedBy;
+-  const openCheckLog = c.checkLogs.find((l) => !l.resolvedAt);
+-
+-  const html = `
+-    <div class="drawer-header">
+-      <div>
+-        <h2>Cheque ${escapeHtml(c.chqNo)}</h2>
+-        <p class="hint" style="margin-top:0.2rem">${escapeHtml(c.issuer?.name || '')} · ${fmtDate(c.chqDate)}</p>
+-      </div>
+-      <button class="drawer-close" id="drawer-close-btn" aria-label="Close">×</button>
+-    </div>
+-
+-    <div>${statusTag(c.status)} <span class="muted num" style="font-size:0.8rem">since ${fmtDate(c.statusDate)}${c.totalDays != null ? ` · ${c.totalDays}d` : ''}</span></div>
+-
+-    <dl class="detail-grid">
+-      <div class="detail-field"><dt>Ref no</dt><dd>${escapeHtml(c.refNo || '—')}</dd></div>
+-      <div class="detail-field"><dt>Receipt</dt><dd>${escapeHtml(c.fiscalYear?.year || '')} ${escapeHtml(c.receiptNo || '')}</dd></div>
+-      <div class="detail-field"><dt>Amount</dt><dd>Rs ${fmtMoney(c.amount)}</dd></div>
+-      <div class="detail-field"><dt>Payee on cheque</dt><dd>${escapeHtml(c.issuedOn)} (${humanize(c.issuedOnType)})</dd></div>
+-      <div class="detail-field"><dt>Cheque type</dt><dd>${humanize(c.chequeType)}</dd></div>
+-      <div class="detail-field"><dt>Drawee bank</dt><dd>${escapeHtml(c.bank?.name || '—')}</dd></div>
+-      <div class="detail-field"><dt>Presented bank</dt><dd>${escapeHtml(c.presentedBank?.name || '—')}</dd></div>
+-      <div class="detail-field"><dt>Handled by</dt><dd>${escapeHtml(c.staff?.name || '—')}</dd></div>
+-      ${c.clearanceMethod ? `<div class="detail-field"><dt>Cleared via</dt><dd>${humanize(c.clearanceMethod)}</dd></div>` : ''}
+-      ${c.returnReason ? `<div class="detail-field"><dt>Return reason</dt><dd>${humanize(c.returnReason)}</dd></div>` : ''}
+-      ${c.replaces ? `<div class="detail-field"><dt>Replaces</dt><dd class="num">${escapeHtml(c.replaces.chqNo)}</dd></div>` : ''}
+-      ${c.replacedBy ? `<div class="detail-field"><dt>Replaced by</dt><dd class="num">${escapeHtml(c.replacedBy.chqNo)}</dd></div>` : ''}
+-    </dl>
+-
+-    <div class="action-row">
+-      <button class="btn btn-sm" data-action="status">Change status</button>
+-      ${canFollowUp ? `<button class="btn btn-sm" data-action="followup">Log follow-up</button>` : ''}
+-      ${canPay ? `<button class="btn btn-sm" data-action="payment">Record payment</button>` : ''}
+-      ${canCheckLog ? `<button class="btn btn-sm" data-action="checklog">Flag for check</button>` : ''}
+-      ${openCheckLog ? `<button class="btn btn-sm" data-action="resolve-checklog" data-log-id="${openCheckLog.id}">Resolve check</button>` : ''}
+-      ${canReplace ? `<button class="btn btn-sm" data-action="replace">Issue replacement</button>` : ''}
+-      <button class="btn btn-sm" data-action="edit">Edit details</button>
+-      <button class="btn btn-sm btn-danger" data-action="delete">Delete cheque</button>
+-    </div>
+-
+-    <div class="section-title">Follow-ups</div>
+-    <div class="timeline">
+-      ${c.followUps.length ? c.followUps.map((f) => `
+-        <div class="timeline-item">
+-          <div class="ti-head"><span>${humanize(f.response)}</span><span class="ti-meta">${fmtDate(f.followUpDate)}</span></div>
+-          ${f.note ? `<div>${escapeHtml(f.note)}</div>` : ''}
+-          ${f.nextActionDate ? `<div class="ti-meta">Next action: ${fmtDate(f.nextActionDate)}</div>` : ''}
+-          ${f.staffId ? `<div class="ti-meta">by ${escapeHtml(state.staff.find((s) => s.id === f.staffId)?.name || '')}</div>` : ''}
+-        </div>`).join('') : `<p class="timeline-empty">No follow-ups logged yet.</p>`}
+-    </div>
+-
+-    <div class="section-title">Payments</div>
+-    <div class="timeline">
+-      ${c.payments.length ? c.payments.map((p) => `
+-        <div class="timeline-item payment">
+-          <div class="ti-head"><span>Rs ${fmtMoney(p.amount)} · ${humanize(p.method)}</span><span class="ti-meta">${fmtDate(p.paymentDate)}</span></div>
+-          ${p.referenceNo ? `<div class="ti-meta">Ref: ${escapeHtml(p.referenceNo)}</div>` : ''}
+-          ${p.note ? `<div>${escapeHtml(p.note)}</div>` : ''}
+-        </div>`).join('') : `<p class="timeline-empty">No payments recorded yet.</p>`}
+-    </div>
+-
+-    <div class="section-title">Check log</div>
+-    <div class="timeline">
+-      ${c.checkLogs.length ? c.checkLogs.map((l) => `
+-        <div class="timeline-item checklog">
+-          <div class="ti-head"><span>${l.resolvedAt ? `Resolved → ${humanize(l.resolvedStatus)}` : 'Open investigation'}</span><span class="ti-meta">${fmtDate(l.raisedAt)}</span></div>
+-          <div>${escapeHtml(l.reason)}</div>
+-          ${l.resolutionNote ? `<div class="ti-meta">${escapeHtml(l.resolutionNote)}</div>` : ''}
+-        </div>`).join('') : `<p class="timeline-empty">Never flagged for manual re-verification.</p>`}
+-    </div>
+-  `;
+-
+-  openDrawer(html);
+-  document.getElementById('drawer-close-btn').addEventListener('click', closeDrawer);
+-  wireChequeActions(c);
+-}
+-
+-function wireChequeActions(c) {
+-  const root = document.getElementById('drawer-content');
+-  root.querySelectorAll('[data-action]').forEach((btn) => {
+-    btn.addEventListener('click', () => {
+-      const action = btn.dataset.action;
+-      if (action === 'status') openChequeStatusModal(c);
+-      if (action === 'followup') openChequeFollowUpModal(c);
+-      if (action === 'payment') openChequePaymentModal(c);
+-      if (action === 'checklog') openChequeCheckLogModal(c);
+-      if (action === 'resolve-checklog') openChequeResolveCheckLogModal(c, btn.dataset.logId);
+-      if (action === 'replace') openChequeReplaceModal(c);
+-      if (action === 'edit') openChequeEditModal(c);
+-      if (action === 'delete') deleteCheque(c);
+-    });
+-  });
+-}
+-
+-function openChequeEditModal(c) {
+-  const body = `
+-    <form id="form-edit-cheque">
+-      <div class="form-error"></div>
+-      <div class="form-grid">
+-        <div class="field">
+-          <label>Fiscal year *</label>
+-          <select name="fiscalYearId" required>${selectOptions(state.fiscalYears, 'id', (f) => f.year, 'Select fiscal year…')}</select>
+-        </div>
+-        <div class="field">
+-          <label>Receipt no.</label>
+-          <input name="receiptNo" type="text" value="${escapeHtml(c.receiptNo || '')}">
+-        </div>
+-        <div class="field">
+-          <label>Ref no</label>
+-          <input name="refNo" type="text" value="${escapeHtml(c.refNo || '')}">
+-        </div>
+-        <div class="field">
+-          <label>Amount *</label>
+-          <input name="amount" type="number" step="0.01" min="0.01" required value="${escapeHtml(c.amount)}">
+-        </div>
+-        <div class="field">
+-          <label>Presented at bank</label>
+-          <select name="presentedBankId">${selectOptions(state.banks, 'id', (b) => b.name, 'Same as drawee bank')}</select>
+-        </div>
+-        <div class="field">
+-          <label>Handled by staff</label>
+-          <select name="staffId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
+-        </div>
+-      </div>
+-
+-      <div class="section-title" style="margin-top:1rem">Risky fields</div>
+-      <p class="hint" style="margin-top:0">These affect the bank/cheque-no uniqueness check and the lifecycle day-count. You'll be asked to confirm if you change any of them.</p>
+-      <div class="form-grid">
+-        <div class="field">
+-          <label>Cheque date *</label>
+-          <input name="chqDate" type="date" required value="${fmtDateInput(c.chqDate)}">
+-        </div>
+-        <div class="field">
+-          <label>Cheque no *</label>
+-          <input name="chqNo" type="text" required value="${escapeHtml(c.chqNo)}">
+-        </div>
+-        <div class="field">
+-          <label>Drawee bank *</label>
+-          <select name="bankId" required>${selectOptions(state.banks, 'id', (b) => b.name, 'Select bank…')}</select>
+-        </div>
+-        <div class="field">
+-          <label>Payee type *</label>
+-          <select name="issuedOnType" required>${enumOptions(PARTY_TYPES)}</select>
+-        </div>
+-      </div>
+-
+-      <div class="form-actions">
+-        <button type="button" class="btn btn-ghost" id="cancel-edit-cheque">Cancel</button>
+-        <button type="submit" class="btn btn-primary">Save changes</button>
+-      </div>
+-    </form>`;
+-  openModal(`Edit cheque — ${escapeHtml(c.chqNo)}`, body, {
+-    onMount: () => {
+-      const form = document.getElementById('form-edit-cheque');
+-      form.querySelector('[name="fiscalYearId"]').value = c.fiscalYearId || '';
+-      syncEditableSelect(form.querySelector('[name="fiscalYearId"]'));
+-      form.querySelector('[name="presentedBankId"]').value = c.presentedBankId || '';
+-      syncEditableSelect(form.querySelector('[name="presentedBankId"]'));
+-      form.querySelector('[name="staffId"]').value = c.staffId || '';
+-      syncEditableSelect(form.querySelector('[name="staffId"]'));
+-      form.querySelector('[name="bankId"]').value = c.bankId;
+-      syncEditableSelect(form.querySelector('[name="bankId"]'));
+-      form.querySelector('[name="issuedOnType"]').value = c.issuedOnType;
+-      document.getElementById('cancel-edit-cheque').addEventListener('click', closeModal);
+-      form.addEventListener('submit', async (e) => {
+-        e.preventDefault();
+-        clearFormError(form);
+-        const data = Object.fromEntries(new FormData(form).entries());
+-
+-        const riskyChanged = data.chqDate !== fmtDateInput(c.chqDate)
+-          || data.chqNo !== c.chqNo
+-          || data.bankId !== c.bankId
+-          || data.issuedOnType !== c.issuedOnType;
+-        if (riskyChanged) {
+-          const ok = await openConfirmModal(
+-            'Change risky fields?',
+-            'You\'re changing the cheque date, cheque no, drawee bank, or payee type. These affect the uniqueness check and the lifecycle day-count for this cheque. Continue?',
+-            { confirmLabel: 'Save changes', danger: false },
+-          );
+-          if (!ok) return;
+-        }
+-
+-        try {
+-          await api(`/cheques/${c.id}`, { method: 'PATCH', body: JSON.stringify(data) });
+-          toast('Cheque updated', 'success');
+-          closeModal();
+-          openChequeDetail(c.id);
+-          loadReceived();
+-          loadDashboard();
+-        } catch (err) {
+-          formError(form, err.message);
+-        }
+-      });
+-    },
+-  });
+-}
+-
+-async function deleteCheque(c) {
+-  const ok = await openConfirmModal(
+-    'Delete cheque?',
+-    `This removes cheque ${escapeHtml(c.chqNo)} from active lists. Its history is kept, not erased.`,
+-  );
+-  if (!ok) return;
+-  try {
+-    await api(`/cheques/${c.id}`, { method: 'DELETE' });
+-    toast('Cheque deleted', 'success');
+-    closeDrawer();
+-    loadReceived();
+-    loadDashboard();
+-  } catch (err) {
+-    toast(err.message, 'error');
+-  }
+-}
+-
+-function openChequeStatusModal(c) {
+-  const body = `
+-    <form id="form-status">
+-      <div class="form-error"></div>
+-      <div class="form-grid">
+-        <div class="field span-2">
+-          <label>New status *</label>
+-          <select name="status" id="status-select" required>${enumOptions(RECEIVED_STATUSES)}</select>
+-        </div>
+-        <div class="field span-2">
+-          <label>Status date *</label>
+-          <input name="statusDate" type="date" id="status-date-input" required value="${fmtDateInput(c.statusDate)}" min="${fmtDateInput(c.chqDate)}">
+-          <span class="hint">Total lifecycle (status date − cheque date) is recalculated from this.</span>
+-        </div>
+-        <div class="field span-2" id="clearance-field" style="display:none">
+-          <label>Clearance method</label>
+-          <select name="clearanceMethod">${enumOptions(CLEARANCE_METHODS)}</select>
+-        </div>
+-        <div class="field" id="return-reason-field" style="display:none">
+-          <label>Return reason</label>
+-          <select name="returnReason">${enumOptions(RETURN_REASONS)}</select>
+-        </div>
+-        <div class="field span-2" id="return-note-field" style="display:none">
+-          <label>Return note</label>
+-          <textarea name="returnNote"></textarea>
+-        </div>
+-      </div>
+-      <div class="form-actions">
+-        <button type="button" class="btn btn-ghost" id="cancel-status">Cancel</button>
+-        <button type="submit" class="btn btn-primary">Update status</button>
+-      </div>
+-    </form>`;
+-  openModal(`Update status — ${escapeHtml(c.chqNo)}`, body, {
+-    onMount: () => {
+-      const form = document.getElementById('form-status');
+-      const select = document.getElementById('status-select');
+-      select.value = c.status;
+-      const toggleFields = () => {
+-        document.getElementById('clearance-field').style.display = select.value === 'CLEARED' ? '' : 'none';
+-        const isReturned = select.value === 'RETURNED';
+-        document.getElementById('return-reason-field').style.display = isReturned ? '' : 'none';
+-        document.getElementById('return-note-field').style.display = isReturned ? '' : 'none';
+-      };
+-      select.addEventListener('change', toggleFields);
+-      toggleFields();
+-      document.getElementById('cancel-status').addEventListener('click', closeModal);
+-      form.addEventListener('submit', async (e) => {
+-        e.preventDefault();
+-        clearFormError(form);
+-        const data = Object.fromEntries(new FormData(form).entries());
+-        try {
+-          await api(`/cheques/${c.id}/status`, { method: 'PATCH', body: JSON.stringify(data) });
+-          toast('Status updated', 'success');
+-          closeModal();
+-          openChequeDetail(c.id);
+-          loadReceived();
+-          loadDashboard();
+-        } catch (err) {
+-          formError(form, err.message);
+-        }
+-      });
+-    },
+-  });
+-}
+-
+-function openChequeFollowUpModal(c) {
+-  const body = `
+-    <form id="form-followup">
+-      <div class="form-error"></div>
+-      <div class="form-grid">
+-        <div class="field span-2">
+-          <label>Response *</label>
+-          <select name="response" required>${enumOptions(FOLLOWUP_RESPONSES)}</select>
+-        </div>
+-        <div class="field">
+-          <label>Follow-up date</label>
+-          <input name="followUpDate" type="date" value="${fmtDateInput(new Date())}">
+-        </div>
+-        <div class="field">
+-          <label>Next action date</label>
+-          <input name="nextActionDate" type="date">
+-        </div>
+-        <div class="field span-2">
+-          <label>Staff</label>
+-          <select name="staffId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
+-        </div>
+-        <div class="field span-2">
+-          <label>Note</label>
+-          <textarea name="note"></textarea>
+-        </div>
+-      </div>
+-      <div class="form-actions">
+-        <button type="button" class="btn btn-ghost" id="cancel-followup">Cancel</button>
+-        <button type="submit" class="btn btn-primary">Log follow-up</button>
+-      </div>
+-    </form>`;
+-  openModal(`Log follow-up — ${escapeHtml(c.chqNo)}`, body, {
+-    onMount: () => {
+-      const form = document.getElementById('form-followup');
+-      document.getElementById('cancel-followup').addEventListener('click', closeModal);
+-      form.addEventListener('submit', async (e) => {
+-        e.preventDefault();
+-        clearFormError(form);
+-        const data = Object.fromEntries(new FormData(form).entries());
+-        try {
+-          await api(`/cheques/${c.id}/followups`, { method: 'POST', body: JSON.stringify(data) });
+-          toast('Follow-up logged', 'success');
+-          closeModal();
+-          openChequeDetail(c.id);
+-          loadReceived();
+-        } catch (err) {
+-          formError(form, err.message);
+-        }
+-      });
+-    },
+-  });
+-}
+-
+-function openChequePaymentModal(c) {
+-  const alreadyPaid = c.payments.reduce((s, p) => s + Number(p.amount), 0);
+-  const remaining = Number(c.amount) - alreadyPaid;
+-  const body = `
+-    <form id="form-payment">
+-      <div class="form-error"></div>
+-      <p class="hint">Remaining balance: Rs ${fmtMoney(remaining)}</p>
+-      <div class="form-grid">
+-        <div class="field">
+-          <label>Amount *</label>
+-          <input name="amount" type="number" step="0.01" min="0.01" max="${remaining}" required>
+-        </div>
+-        <div class="field">
+-          <label>Method *</label>
+-          <select name="method" required>${enumOptions(PAYMENT_METHODS)}</select>
+-        </div>
+-        <div class="field">
+-          <label>Payment date</label>
+-          <input name="paymentDate" type="date" value="${fmtDateInput(new Date())}">
+-        </div>
+-        <div class="field">
+-          <label>Reference no</label>
+-          <input name="referenceNo" type="text">
+-        </div>
+-        <div class="field span-2">
+-          <label>Staff</label>
+-          <select name="staffId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
+-        </div>
+-        <div class="field span-2">
+-          <label>Note</label>
+-          <textarea name="note"></textarea>
+-        </div>
+-      </div>
+-      <div class="form-actions">
+-        <button type="button" class="btn btn-ghost" id="cancel-payment">Cancel</button>
+-        <button type="submit" class="btn btn-primary">Record payment</button>
+-      </div>
+-    </form>`;
+-  openModal(`Record payment — ${escapeHtml(c.chqNo)}`, body, {
+-    onMount: () => {
+-      const form = document.getElementById('form-payment');
+-      document.getElementById('cancel-payment').addEventListener('click', closeModal);
+-      form.addEventListener('submit', async (e) => {
+-        e.preventDefault();
+-        clearFormError(form);
+-        const data = Object.fromEntries(new FormData(form).entries());
+-        try {
+-          await api(`/cheques/${c.id}/payments`, { method: 'POST', body: JSON.stringify(data) });
+-          toast('Payment recorded', 'success');
+-          closeModal();
+-          openChequeDetail(c.id);
+-          loadReceived();
+-          loadDashboard();
+-        } catch (err) {
+-          formError(form, err.message);
+-        }
+-      });
+-    },
+-  });
+-}
+-
+-function openChequeCheckLogModal(c) {
+-  const body = `
+-    <form id="form-checklog">
+-      <div class="form-error"></div>
+-      <div class="form-grid">
+-        <div class="field span-2">
+-          <label>Reason *</label>
+-          <textarea name="reason" required placeholder="e.g. not updated since last month, needs manual re-verification"></textarea>
+-        </div>
+-        <div class="field span-2">
+-          <label>Raised by</label>
+-          <select name="raisedById">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
+-        </div>
+-      </div>
+-      <div class="form-actions">
+-        <button type="button" class="btn btn-ghost" id="cancel-checklog">Cancel</button>
+-        <button type="submit" class="btn btn-primary">Flag for check</button>
+-      </div>
+-    </form>`;
+-  openModal(`Flag for manual check — ${escapeHtml(c.chqNo)}`, body, {
+-    onMount: () => {
+-      const form = document.getElementById('form-checklog');
+-      document.getElementById('cancel-checklog').addEventListener('click', closeModal);
+-      form.addEventListener('submit', async (e) => {
+-        e.preventDefault();
+-        clearFormError(form);
+-        const data = Object.fromEntries(new FormData(form).entries());
+-        try {
+-          await api(`/cheques/${c.id}/checklogs`, { method: 'POST', body: JSON.stringify(data) });
+-          toast('Cheque flagged for check', 'success');
+-          closeModal();
+-          openChequeDetail(c.id);
+-          loadReceived();
+-          loadDashboard();
+-        } catch (err) {
+-          formError(form, err.message);
+-        }
+-      });
+-    },
+-  });
+-}
+-
+-function openChequeResolveCheckLogModal(c, logId) {
+-  const body = `
+-    <form id="form-resolve">
+-      <div class="form-error"></div>
+-      <div class="form-grid">
+-        <div class="field span-2">
+-          <label>Actual status *</label>
+-          <select name="resolvedStatus" required>${enumOptions(RECEIVED_STATUSES.filter((s) => s !== 'ON_CHECK'))}</select>
+-        </div>
+-        <div class="field span-2">
+-          <label>Resolution note</label>
+-          <textarea name="resolutionNote" placeholder="What did you find out?"></textarea>
+-        </div>
+-      </div>
+-      <div class="form-actions">
+-        <button type="button" class="btn btn-ghost" id="cancel-resolve">Cancel</button>
+-        <button type="submit" class="btn btn-primary">Resolve</button>
+-      </div>
+-    </form>`;
+-  openModal(`Resolve check — ${escapeHtml(c.chqNo)}`, body, {
+-    onMount: () => {
+-      const form = document.getElementById('form-resolve');
+-      document.getElementById('cancel-resolve').addEventListener('click', closeModal);
+-      form.addEventListener('submit', async (e) => {
+-        e.preventDefault();
+-        clearFormError(form);
+-        const data = Object.fromEntries(new FormData(form).entries());
+-        try {
+-          await api(`/cheques/${c.id}/checklogs/${logId}/resolve`, { method: 'PATCH', body: JSON.stringify(data) });
+-          toast('Check resolved', 'success');
+-          closeModal();
+-          openChequeDetail(c.id);
+-          loadReceived();
+-          loadDashboard();
+-        } catch (err) {
+-          formError(form, err.message);
+-        }
+-      });
+-    },
+-  });
+-}
+-
+-function openChequeReplaceModal(c) {
+-  const body = `
+-    <form id="form-replace">
+-      <div class="form-error"></div>
+-      <p class="hint">Same fiscal year, receipt no., issuer and payee carry over automatically.</p>
+-      <div class="form-grid">
+-        <div class="field">
+-          <label>New cheque no *</label>
+-          <input name="chqNo" type="text" required>
+-        </div>
+-        <div class="field">
+-          <label>New cheque date *</label>
+-          <input name="chqDate" type="date" required>
+-        </div>
+-        <div class="field">
+-          <label>Amount</label>
+-          <input name="amount" type="number" step="0.01" min="0.01" value="${c.amount}">
+-        </div>
+-        <div class="field">
+-          <label>Drawee bank</label>
+-          <select name="bankId">${selectOptions(state.banks, 'id', (b) => b.name, 'Same as original')}</select>
+-        </div>
+-      </div>
+-      <div class="form-actions">
+-        <button type="button" class="btn btn-ghost" id="cancel-replace">Cancel</button>
+-        <button type="submit" class="btn btn-primary">Create replacement</button>
+-      </div>
+-    </form>`;
+-  openModal(`Issue replacement — for ${escapeHtml(c.chqNo)}`, body, {
+-    onMount: () => {
+-      const form = document.getElementById('form-replace');
+-      document.getElementById('cancel-replace').addEventListener('click', closeModal);
+-      form.addEventListener('submit', async (e) => {
+-        e.preventDefault();
+-        clearFormError(form);
+-        const data = Object.fromEntries(new FormData(form).entries());
+-        if (!data.bankId) delete data.bankId;
+-        try {
+-          const replacement = await api(`/cheques/${c.id}/replace`, { method: 'POST', body: JSON.stringify(data) });
+-          toast('Replacement cheque created', 'success');
+-          closeModal();
+-          openChequeDetail(replacement.id);
+-          loadReceived();
+-        } catch (err) {
+-          formError(form, err.message);
+-        }
+-      });
+-    },
+-  });
+-}
++import { api } from './api.js';
++import { toast } from './toast.js';
++import { state } from './state.js';
++import { openModal, closeModal, formError, clearFormError, openConfirmModal } from './modal.js';
++import { openDrawer, closeDrawer } from './drawer.js';
++import { escapeHtml, fmtDate, fmtMoney, fmtDateInput, humanize, statusTag, selectOptions, enumOptions, debounce, paginationControls, wirePaginationControls } from './utils.js';
++import { RECEIVED_STATUSES, FOLLOWUP_RESPONSES, RETURN_REASONS, PAYMENT_METHODS, CLEARANCE_METHODS, PARTY_TYPES } from './constants.js';
++import { loadDashboard } from './dashboard.js';
++import { syncEditableSelect } from './combobox.js';
++
++// ============================================================================
++// RECEIVED CHEQUES
++// ============================================================================
++const PAGE_SIZE = 50;
++let receivedPage = 1;
++
++export async function loadReceived(page = receivedPage) {
++  const search = document.getElementById('received-search').value;
++  const status = document.getElementById('received-status-filter').value;
++  const params = new URLSearchParams();
++  if (search) params.set('search', search);
++  if (status) params.set('status', status);
++  params.set('page', page);
++  params.set('pageSize', PAGE_SIZE);
++
++  try {
++    const { cheques, total } = await api(`/cheques?${params.toString()}`);
++    receivedPage = page;
++    renderReceivedTable(cheques, total, page);
++  } catch (err) {
++    toast(err.message, 'error');
++  }
++}
++
++function renderReceivedTable(cheques, total, page) {
++  const el = document.getElementById('received-table');
++  if (!cheques.length) { el.innerHTML = `<table class="ledger cheque-register"><tbody><tr class="empty-row"><td>No cheques match. Try clearing filters, or record a new cheque.</td></tr></tbody></table>`; return; }
++  el.innerHTML = `<div class="cheque-table-wrap"><table class="ledger cheque-register"><thead><tr><th class="cheque-expand-col" aria-label="Details"></th><th>Cheque / receipt</th><th>Issuer / party</th><th>Bank</th><th>Cheque date</th><th class="amount-head">Amount</th><th>Status</th></tr></thead><tbody>${cheques.map(c => { const receipt=[c.fiscalYear?.year,c.receiptNo].filter(Boolean).join(' · ')||'No receipt'; return `<tr class="cheque-main-row" data-id="${c.id}"><td class="cheque-expand-col"><button class="cheque-expand-btn" type="button" aria-expanded="false" aria-label="Show details">+</button></td><td><div class="cheque-primary num">${escapeHtml(c.chqNo)}</div><div class="cheque-secondary num">${escapeHtml(c.refNo||receipt)}</div></td><td><div class="cheque-primary">${escapeHtml(c.issuer?.name||'—')}</div><div class="cheque-secondary">${escapeHtml(c.issuedOn||'Payee not recorded')}</div></td><td><div class="cheque-primary">${escapeHtml(c.bank?.name||'—')}</div><div class="cheque-secondary">Presented: ${escapeHtml(c.presentedBank?.name||'Same as drawee')}</div></td><td class="date-stack">${fmtDate(c.chqDate)}</td><td class="amount">${fmtMoney(c.amount)}</td><td>${statusTag(c.status)}</td></tr><tr class="cheque-detail-row" data-detail-for="${c.id}" hidden><td colspan="7"><div class="cheque-detail-grid"><div><span>Receipt</span><strong>${escapeHtml(receipt)}</strong></div><div><span>Reference no.</span><strong>${escapeHtml(c.refNo||'—')}</strong></div><div><span>Payee on cheque</span><strong>${escapeHtml(c.issuedOn||'—')}</strong></div><div><span>Payee type</span><strong>${humanize(c.issuedOnType)}</strong></div><div><span>Handled by</span><strong>${escapeHtml(c.staff?.name||'Unassigned')}</strong></div><div><span>Status since</span><strong>${fmtDate(c.statusDate)}</strong></div></div><button class="btn btn-sm cheque-open-detail" type="button" data-open-id="${c.id}">Open full record →</button></td></tr>`; }).join('')}</tbody></table></div>${paginationControls(total,page,PAGE_SIZE)}`;
++  el.querySelectorAll('.cheque-main-row').forEach(row=>row.addEventListener('click',e=>{if(!e.target.closest('.cheque-expand-btn'))openChequeDetail(row.dataset.id);}));
++  el.querySelectorAll('.cheque-expand-btn').forEach(btn=>btn.addEventListener('click',e=>{e.stopPropagation();const d=el.querySelector(`[data-detail-for="${btn.closest('tr').dataset.id}"]`);const open=!d.hidden;d.hidden=open;btn.textContent=open?'+':'−';btn.setAttribute('aria-expanded',String(!open));}));
++  el.querySelectorAll('.cheque-open-detail').forEach(btn=>btn.addEventListener('click',()=>openChequeDetail(btn.dataset.openId)));
++  wirePaginationControls(el,total,page,loadReceived,PAGE_SIZE);
++}
++
++document.getElementById('received-search').addEventListener('input', debounce(() => loadReceived(1), 300));
++document.getElementById('received-status-filter').addEventListener('change', () => loadReceived(1));
++
++document.getElementById('btn-new-cheque').addEventListener('click', () => openNewChequeModal());
++
++function openNewChequeModal() {
++  const body = `
++    <form id="form-new-cheque">
++      <div class="form-error"></div>
++      <div class="form-grid">
++        <div class="field">
++          <label>Fiscal year *</label>
++          <select name="fiscalYearId" required>${selectOptions(state.fiscalYears, 'id', (f) => f.year, 'Select fiscal year…')}</select>
++        </div>
++        <div class="field">
++          <label>Receipt no.</label>
++          <input name="receiptNo" type="text" placeholder="UR-001">
++        </div>
++        <div class="field">
++          <label>Ref no</label>
++          <input name="refNo" type="text" placeholder="URT-001/01">
++        </div>
++        <div class="field">
++          <label>Cheque no *</label>
++          <input name="chqNo" type="text" required>
++        </div>
++        <div class="field span-2">
++          <label>Issuer (party) *</label>
++          <select name="issuerId" required>${selectOptions(state.parties, 'id', (p) => `${p.name} (${humanize(p.type)})`, 'Select issuer…')}</select>
++        </div>
++        <div class="field">
++          <label>Payee name on cheque *</label>
++          <input name="issuedOn" type="text" required>
++        </div>
++        <div class="field">
++          <label>Payee type *</label>
++          <select name="issuedOnType" required>${enumOptions(PARTY_TYPES)}</select>
++        </div>
++        <div class="field">
++          <label>Cheque date *</label>
++          <input name="chqDate" type="date" required>
++        </div>
++        <div class="field">
++          <label>Amount *</label>
++          <input name="amount" type="number" step="0.01" min="0.01" required>
++        </div>
++        <div class="field">
++          <label>Drawee bank *</label>
++          <select name="bankId" required>${selectOptions(state.banks, 'id', (b) => b.name, 'Select bank…')}</select>
++        </div>
++        <div class="field">
++          <label>Presented at bank</label>
++          <select name="presentedBankId">${selectOptions(state.banks, 'id', (b) => b.name, 'Same as drawee bank')}</select>
++        </div>
++        <div class="field span-2">
++          <label>Handled by staff</label>
++          <select name="staffId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
++        </div>
++      </div>
++      <div class="form-actions">
++        <button type="button" class="btn btn-ghost" id="cancel-new-cheque">Cancel</button>
++        <button type="submit" class="btn btn-primary">Save cheque</button>
++      </div>
++    </form>`;
++
++  openModal('New received cheque', body, {
++    onMount: () => {
++      const form = document.getElementById('form-new-cheque');
++      document.getElementById('cancel-new-cheque').addEventListener('click', closeModal);
++      form.addEventListener('submit', async (e) => {
++        e.preventDefault();
++        clearFormError(form);
++        const data = Object.fromEntries(new FormData(form).entries());
++        try {
++          await api('/cheques', { method: 'POST', body: JSON.stringify(data) });
++          toast('Cheque recorded', 'success');
++          closeModal();
++          loadReceived();
++          loadDashboard();
++        } catch (err) {
++          formError(form, err.message);
++        }
++      });
++    },
++  });
++}
++
++export async function openChequeDetail(id) {
++  try {
++    const c = await api(`/cheques/${id}`);
++    renderChequeDrawer(c);
++  } catch (err) {
++    toast(err.message, 'error');
++  }
++}
++
++function renderChequeDrawer(c) {
++  const canFollowUp = ['PENDING', 'FOLLOWUP'].includes(c.status);
++  const canPay = !['CLEARED'].includes(c.status);
++  const canCheckLog = c.status !== 'ON_CHECK';
++  const canReplace = c.status === 'RETURNED' && !c.replacedBy;
++  const openCheckLog = c.checkLogs.find((l) => !l.resolvedAt);
++
++  const html = `
++    <div class="drawer-header">
++      <div>
++        <h2>Cheque ${escapeHtml(c.chqNo)}</h2>
++        <p class="hint" style="margin-top:0.2rem">${escapeHtml(c.issuer?.name || '')} · ${fmtDate(c.chqDate)}</p>
++      </div>
++      <button class="drawer-close" id="drawer-close-btn" aria-label="Close">×</button>
++    </div>
++
++    <div>${statusTag(c.status)} <span class="muted num" style="font-size:0.8rem">since ${fmtDate(c.statusDate)}${c.totalDays != null ? ` · ${c.totalDays}d` : ''}</span></div>
++
++    <dl class="detail-grid">
++      <div class="detail-field"><dt>Ref no</dt><dd>${escapeHtml(c.refNo || '—')}</dd></div>
++      <div class="detail-field"><dt>Receipt</dt><dd>${escapeHtml(c.fiscalYear?.year || '')} ${escapeHtml(c.receiptNo || '')}</dd></div>
++      <div class="detail-field"><dt>Amount</dt><dd>Rs ${fmtMoney(c.amount)}</dd></div>
++      <div class="detail-field"><dt>Payee on cheque</dt><dd>${escapeHtml(c.issuedOn)} (${humanize(c.issuedOnType)})</dd></div>
++      <div class="detail-field"><dt>Cheque type</dt><dd>${humanize(c.chequeType)}</dd></div>
++      <div class="detail-field"><dt>Drawee bank</dt><dd>${escapeHtml(c.bank?.name || '—')}</dd></div>
++      <div class="detail-field"><dt>Presented bank</dt><dd>${escapeHtml(c.presentedBank?.name || '—')}</dd></div>
++      <div class="detail-field"><dt>Handled by</dt><dd>${escapeHtml(c.staff?.name || '—')}</dd></div>
++      ${c.clearanceMethod ? `<div class="detail-field"><dt>Cleared via</dt><dd>${humanize(c.clearanceMethod)}</dd></div>` : ''}
++      ${c.returnReason ? `<div class="detail-field"><dt>Return reason</dt><dd>${humanize(c.returnReason)}</dd></div>` : ''}
++      ${c.replaces ? `<div class="detail-field"><dt>Replaces</dt><dd class="num">${escapeHtml(c.replaces.chqNo)}</dd></div>` : ''}
++      ${c.replacedBy ? `<div class="detail-field"><dt>Replaced by</dt><dd class="num">${escapeHtml(c.replacedBy.chqNo)}</dd></div>` : ''}
++    </dl>
++
++    <div class="action-row">
++      <button class="btn btn-sm" data-action="status">Change status</button>
++      ${canFollowUp ? `<button class="btn btn-sm" data-action="followup">Log follow-up</button>` : ''}
++      ${canPay ? `<button class="btn btn-sm" data-action="payment">Record payment</button>` : ''}
++      ${canCheckLog ? `<button class="btn btn-sm" data-action="checklog">Flag for check</button>` : ''}
++      ${openCheckLog ? `<button class="btn btn-sm" data-action="resolve-checklog" data-log-id="${openCheckLog.id}">Resolve check</button>` : ''}
++      ${canReplace ? `<button class="btn btn-sm" data-action="replace">Issue replacement</button>` : ''}
++      <button class="btn btn-sm" data-action="edit">Edit details</button>
++      <button class="btn btn-sm btn-danger" data-action="delete">Delete cheque</button>
++    </div>
++
++    <div class="section-title">Follow-ups</div>
++    <div class="timeline">
++      ${c.followUps.length ? c.followUps.map((f) => `
++        <div class="timeline-item">
++          <div class="ti-head"><span>${humanize(f.response)}</span><span class="ti-meta">${fmtDate(f.followUpDate)}</span></div>
++          ${f.note ? `<div>${escapeHtml(f.note)}</div>` : ''}
++          ${f.nextActionDate ? `<div class="ti-meta">Next action: ${fmtDate(f.nextActionDate)}</div>` : ''}
++          ${f.staffId ? `<div class="ti-meta">by ${escapeHtml(state.staff.find((s) => s.id === f.staffId)?.name || '')}</div>` : ''}
++        </div>`).join('') : `<p class="timeline-empty">No follow-ups logged yet.</p>`}
++    </div>
++
++    <div class="section-title">Payments</div>
++    <div class="timeline">
++      ${c.payments.length ? c.payments.map((p) => `
++        <div class="timeline-item payment">
++          <div class="ti-head"><span>Rs ${fmtMoney(p.amount)} · ${humanize(p.method)}</span><span class="ti-meta">${fmtDate(p.paymentDate)}</span></div>
++          ${p.referenceNo ? `<div class="ti-meta">Ref: ${escapeHtml(p.referenceNo)}</div>` : ''}
++          ${p.note ? `<div>${escapeHtml(p.note)}</div>` : ''}
++        </div>`).join('') : `<p class="timeline-empty">No payments recorded yet.</p>`}
++    </div>
++
++    <div class="section-title">Check log</div>
++    <div class="timeline">
++      ${c.checkLogs.length ? c.checkLogs.map((l) => `
++        <div class="timeline-item checklog">
++          <div class="ti-head"><span>${l.resolvedAt ? `Resolved → ${humanize(l.resolvedStatus)}` : 'Open investigation'}</span><span class="ti-meta">${fmtDate(l.raisedAt)}</span></div>
++          <div>${escapeHtml(l.reason)}</div>
++          ${l.resolutionNote ? `<div class="ti-meta">${escapeHtml(l.resolutionNote)}</div>` : ''}
++        </div>`).join('') : `<p class="timeline-empty">Never flagged for manual re-verification.</p>`}
++    </div>
++  `;
++
++  openDrawer(html);
++  document.getElementById('drawer-close-btn').addEventListener('click', closeDrawer);
++  wireChequeActions(c);
++}
++
++function wireChequeActions(c) {
++  const root = document.getElementById('drawer-content');
++  root.querySelectorAll('[data-action]').forEach((btn) => {
++    btn.addEventListener('click', () => {
++      const action = btn.dataset.action;
++      if (action === 'status') openChequeStatusModal(c);
++      if (action === 'followup') openChequeFollowUpModal(c);
++      if (action === 'payment') openChequePaymentModal(c);
++      if (action === 'checklog') openChequeCheckLogModal(c);
++      if (action === 'resolve-checklog') openChequeResolveCheckLogModal(c, btn.dataset.logId);
++      if (action === 'replace') openChequeReplaceModal(c);
++      if (action === 'edit') openChequeEditModal(c);
++      if (action === 'delete') deleteCheque(c);
++    });
++  });
++}
++
++function openChequeEditModal(c) {
++  const body = `
++    <form id="form-edit-cheque">
++      <div class="form-error"></div>
++      <div class="form-grid">
++        <div class="field">
++          <label>Fiscal year *</label>
++          <select name="fiscalYearId" required>${selectOptions(state.fiscalYears, 'id', (f) => f.year, 'Select fiscal year…')}</select>
++        </div>
++        <div class="field">
++          <label>Receipt no.</label>
++          <input name="receiptNo" type="text" value="${escapeHtml(c.receiptNo || '')}">
++        </div>
++        <div class="field">
++          <label>Ref no</label>
++          <input name="refNo" type="text" value="${escapeHtml(c.refNo || '')}">
++        </div>
++        <div class="field">
++          <label>Amount *</label>
++          <input name="amount" type="number" step="0.01" min="0.01" required value="${escapeHtml(c.amount)}">
++        </div>
++        <div class="field">
++          <label>Presented at bank</label>
++          <select name="presentedBankId">${selectOptions(state.banks, 'id', (b) => b.name, 'Same as drawee bank')}</select>
++        </div>
++        <div class="field">
++          <label>Handled by staff</label>
++          <select name="staffId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
++        </div>
++      </div>
++
++      <div class="section-title" style="margin-top:1rem">Risky fields</div>
++      <p class="hint" style="margin-top:0">These affect the bank/cheque-no uniqueness check and the lifecycle day-count. You'll be asked to confirm if you change any of them.</p>
++      <div class="form-grid">
++        <div class="field">
++          <label>Cheque date *</label>
++          <input name="chqDate" type="date" required value="${fmtDateInput(c.chqDate)}">
++        </div>
++        <div class="field">
++          <label>Cheque no *</label>
++          <input name="chqNo" type="text" required value="${escapeHtml(c.chqNo)}">
++        </div>
++        <div class="field">
++          <label>Drawee bank *</label>
++          <select name="bankId" required>${selectOptions(state.banks, 'id', (b) => b.name, 'Select bank…')}</select>
++        </div>
++        <div class="field">
++          <label>Payee type *</label>
++          <select name="issuedOnType" required>${enumOptions(PARTY_TYPES)}</select>
++        </div>
++      </div>
++
++      <div class="form-actions">
++        <button type="button" class="btn btn-ghost" id="cancel-edit-cheque">Cancel</button>
++        <button type="submit" class="btn btn-primary">Save changes</button>
++      </div>
++    </form>`;
++  openModal(`Edit cheque — ${escapeHtml(c.chqNo)}`, body, {
++    onMount: () => {
++      const form = document.getElementById('form-edit-cheque');
++      form.querySelector('[name="fiscalYearId"]').value = c.fiscalYearId || '';
++      syncEditableSelect(form.querySelector('[name="fiscalYearId"]'));
++      form.querySelector('[name="presentedBankId"]').value = c.presentedBankId || '';
++      syncEditableSelect(form.querySelector('[name="presentedBankId"]'));
++      form.querySelector('[name="staffId"]').value = c.staffId || '';
++      syncEditableSelect(form.querySelector('[name="staffId"]'));
++      form.querySelector('[name="bankId"]').value = c.bankId;
++      syncEditableSelect(form.querySelector('[name="bankId"]'));
++      form.querySelector('[name="issuedOnType"]').value = c.issuedOnType;
++      document.getElementById('cancel-edit-cheque').addEventListener('click', closeModal);
++      form.addEventListener('submit', async (e) => {
++        e.preventDefault();
++        clearFormError(form);
++        const data = Object.fromEntries(new FormData(form).entries());
++
++        const riskyChanged = data.chqDate !== fmtDateInput(c.chqDate)
++          || data.chqNo !== c.chqNo
++          || data.bankId !== c.bankId
++          || data.issuedOnType !== c.issuedOnType;
++        if (riskyChanged) {
++          const ok = await openConfirmModal(
++            'Change risky fields?',
++            'You\'re changing the cheque date, cheque no, drawee bank, or payee type. These affect the uniqueness check and the lifecycle day-count for this cheque. Continue?',
++            { confirmLabel: 'Save changes', danger: false },
++          );
++          if (!ok) return;
++        }
++
++        try {
++          await api(`/cheques/${c.id}`, { method: 'PATCH', body: JSON.stringify(data) });
++          toast('Cheque updated', 'success');
++          closeModal();
++          openChequeDetail(c.id);
++          loadReceived();
++          loadDashboard();
++        } catch (err) {
++          formError(form, err.message);
++        }
++      });
++    },
++  });
++}
++
++async function deleteCheque(c) {
++  const ok = await openConfirmModal(
++    'Delete cheque?',
++    `This removes cheque ${escapeHtml(c.chqNo)} from active lists. Its history is kept, not erased.`,
++  );
++  if (!ok) return;
++  try {
++    await api(`/cheques/${c.id}`, { method: 'DELETE' });
++    toast('Cheque deleted', 'success');
++    closeDrawer();
++    loadReceived();
++    loadDashboard();
++  } catch (err) {
++    toast(err.message, 'error');
++  }
++}
++
++function openChequeStatusModal(c) {
++  const body = `
++    <form id="form-status">
++      <div class="form-error"></div>
++      <div class="form-grid">
++        <div class="field span-2">
++          <label>New status *</label>
++          <select name="status" id="status-select" required>${enumOptions(RECEIVED_STATUSES)}</select>
++        </div>
++        <div class="field span-2">
++          <label>Status date *</label>
++          <input name="statusDate" type="date" id="status-date-input" required value="${fmtDateInput(c.statusDate)}" min="${fmtDateInput(c.chqDate)}">
++          <span class="hint">Total lifecycle (status date − cheque date) is recalculated from this.</span>
++        </div>
++        <div class="field span-2" id="clearance-field" style="display:none">
++          <label>Clearance method</label>
++          <select name="clearanceMethod">${enumOptions(CLEARANCE_METHODS)}</select>
++        </div>
++        <div class="field" id="return-reason-field" style="display:none">
++          <label>Return reason</label>
++          <select name="returnReason">${enumOptions(RETURN_REASONS)}</select>
++        </div>
++        <div class="field span-2" id="return-note-field" style="display:none">
++          <label>Return note</label>
++          <textarea name="returnNote"></textarea>
++        </div>
++      </div>
++      <div class="form-actions">
++        <button type="button" class="btn btn-ghost" id="cancel-status">Cancel</button>
++        <button type="submit" class="btn btn-primary">Update status</button>
++      </div>
++    </form>`;
++  openModal(`Update status — ${escapeHtml(c.chqNo)}`, body, {
++    onMount: () => {
++      const form = document.getElementById('form-status');
++      const select = document.getElementById('status-select');
++      select.value = c.status;
++      const toggleFields = () => {
++        document.getElementById('clearance-field').style.display = select.value === 'CLEARED' ? '' : 'none';
++        const isReturned = select.value === 'RETURNED';
++        document.getElementById('return-reason-field').style.display = isReturned ? '' : 'none';
++        document.getElementById('return-note-field').style.display = isReturned ? '' : 'none';
++      };
++      select.addEventListener('change', toggleFields);
++      toggleFields();
++      document.getElementById('cancel-status').addEventListener('click', closeModal);
++      form.addEventListener('submit', async (e) => {
++        e.preventDefault();
++        clearFormError(form);
++        const data = Object.fromEntries(new FormData(form).entries());
++        try {
++          await api(`/cheques/${c.id}/status`, { method: 'PATCH', body: JSON.stringify(data) });
++          toast('Status updated', 'success');
++          closeModal();
++          openChequeDetail(c.id);
++          loadReceived();
++          loadDashboard();
++        } catch (err) {
++          formError(form, err.message);
++        }
++      });
++    },
++  });
++}
++
++function openChequeFollowUpModal(c) {
++  const body = `
++    <form id="form-followup">
++      <div class="form-error"></div>
++      <div class="form-grid">
++        <div class="field span-2">
++          <label>Response *</label>
++          <select name="response" required>${enumOptions(FOLLOWUP_RESPONSES)}</select>
++        </div>
++        <div class="field">
++          <label>Follow-up date</label>
++          <input name="followUpDate" type="date" value="${fmtDateInput(new Date())}">
++        </div>
++        <div class="field">
++          <label>Next action date</label>
++          <input name="nextActionDate" type="date">
++        </div>
++        <div class="field span-2">
++          <label>Staff</label>
++          <select name="staffId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
++        </div>
++        <div class="field span-2">
++          <label>Note</label>
++          <textarea name="note"></textarea>
++        </div>
++      </div>
++      <div class="form-actions">
++        <button type="button" class="btn btn-ghost" id="cancel-followup">Cancel</button>
++        <button type="submit" class="btn btn-primary">Log follow-up</button>
++      </div>
++    </form>`;
++  openModal(`Log follow-up — ${escapeHtml(c.chqNo)}`, body, {
++    onMount: () => {
++      const form = document.getElementById('form-followup');
++      document.getElementById('cancel-followup').addEventListener('click', closeModal);
++      form.addEventListener('submit', async (e) => {
++        e.preventDefault();
++        clearFormError(form);
++        const data = Object.fromEntries(new FormData(form).entries());
++        try {
++          await api(`/cheques/${c.id}/followups`, { method: 'POST', body: JSON.stringify(data) });
++          toast('Follow-up logged', 'success');
++          closeModal();
++          openChequeDetail(c.id);
++          loadReceived();
++        } catch (err) {
++          formError(form, err.message);
++        }
++      });
++    },
++  });
++}
++
++function openChequePaymentModal(c) {
++  const alreadyPaid = c.payments.reduce((s, p) => s + Number(p.amount), 0);
++  const remaining = Number(c.amount) - alreadyPaid;
++  const body = `
++    <form id="form-payment">
++      <div class="form-error"></div>
++      <p class="hint">Remaining balance: Rs ${fmtMoney(remaining)}</p>
++      <div class="form-grid">
++        <div class="field">
++          <label>Amount *</label>
++          <input name="amount" type="number" step="0.01" min="0.01" max="${remaining}" required>
++        </div>
++        <div class="field">
++          <label>Method *</label>
++          <select name="method" required>${enumOptions(PAYMENT_METHODS)}</select>
++        </div>
++        <div class="field">
++          <label>Payment date</label>
++          <input name="paymentDate" type="date" value="${fmtDateInput(new Date())}">
++        </div>
++        <div class="field">
++          <label>Reference no</label>
++          <input name="referenceNo" type="text">
++        </div>
++        <div class="field span-2">
++          <label>Staff</label>
++          <select name="staffId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
++        </div>
++        <div class="field span-2">
++          <label>Note</label>
++          <textarea name="note"></textarea>
++        </div>
++      </div>
++      <div class="form-actions">
++        <button type="button" class="btn btn-ghost" id="cancel-payment">Cancel</button>
++        <button type="submit" class="btn btn-primary">Record payment</button>
++      </div>
++    </form>`;
++  openModal(`Record payment — ${escapeHtml(c.chqNo)}`, body, {
++    onMount: () => {
++      const form = document.getElementById('form-payment');
++      document.getElementById('cancel-payment').addEventListener('click', closeModal);
++      form.addEventListener('submit', async (e) => {
++        e.preventDefault();
++        clearFormError(form);
++        const data = Object.fromEntries(new FormData(form).entries());
++        try {
++          await api(`/cheques/${c.id}/payments`, { method: 'POST', body: JSON.stringify(data) });
++          toast('Payment recorded', 'success');
++          closeModal();
++          openChequeDetail(c.id);
++          loadReceived();
++          loadDashboard();
++        } catch (err) {
++          formError(form, err.message);
++        }
++      });
++    },
++  });
++}
++
++function openChequeCheckLogModal(c) {
++  const body = `
++    <form id="form-checklog">
++      <div class="form-error"></div>
++      <div class="form-grid">
++        <div class="field span-2">
++          <label>Reason *</label>
++          <textarea name="reason" required placeholder="e.g. not updated since last month, needs manual re-verification"></textarea>
++        </div>
++        <div class="field span-2">
++          <label>Raised by</label>
++          <select name="raisedById">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
++        </div>
++      </div>
++      <div class="form-actions">
++        <button type="button" class="btn btn-ghost" id="cancel-checklog">Cancel</button>
++        <button type="submit" class="btn btn-primary">Flag for check</button>
++      </div>
++    </form>`;
++  openModal(`Flag for manual check — ${escapeHtml(c.chqNo)}`, body, {
++    onMount: () => {
++      const form = document.getElementById('form-checklog');
++      document.getElementById('cancel-checklog').addEventListener('click', closeModal);
++      form.addEventListener('submit', async (e) => {
++        e.preventDefault();
++        clearFormError(form);
++        const data = Object.fromEntries(new FormData(form).entries());
++        try {
++          await api(`/cheques/${c.id}/checklogs`, { method: 'POST', body: JSON.stringify(data) });
++          toast('Cheque flagged for check', 'success');
++          closeModal();
++          openChequeDetail(c.id);
++          loadReceived();
++          loadDashboard();
++        } catch (err) {
++          formError(form, err.message);
++        }
++      });
++    },
++  });
++}
++
++function openChequeResolveCheckLogModal(c, logId) {
++  const body = `
++    <form id="form-resolve">
++      <div class="form-error"></div>
++      <div class="form-grid">
++        <div class="field span-2">
++          <label>Actual status *</label>
++          <select name="resolvedStatus" required>${enumOptions(RECEIVED_STATUSES.filter((s) => s !== 'ON_CHECK'))}</select>
++        </div>
++        <div class="field span-2">
++          <label>Resolution note</label>
++          <textarea name="resolutionNote" placeholder="What did you find out?"></textarea>
++        </div>
++      </div>
++      <div class="form-actions">
++        <button type="button" class="btn btn-ghost" id="cancel-resolve">Cancel</button>
++        <button type="submit" class="btn btn-primary">Resolve</button>
++      </div>
++    </form>`;
++  openModal(`Resolve check — ${escapeHtml(c.chqNo)}`, body, {
++    onMount: () => {
++      const form = document.getElementById('form-resolve');
++      document.getElementById('cancel-resolve').addEventListener('click', closeModal);
++      form.addEventListener('submit', async (e) => {
++        e.preventDefault();
++        clearFormError(form);
++        const data = Object.fromEntries(new FormData(form).entries());
++        try {
++          await api(`/cheques/${c.id}/checklogs/${logId}/resolve`, { method: 'PATCH', body: JSON.stringify(data) });
++          toast('Check resolved', 'success');
++          closeModal();
++          openChequeDetail(c.id);
++          loadReceived();
++          loadDashboard();
++        } catch (err) {
++          formError(form, err.message);
++        }
++      });
++    },
++  });
++}
++
++function openChequeReplaceModal(c) {
++  const body = `
++    <form id="form-replace">
++      <div class="form-error"></div>
++      <p class="hint">Same fiscal year, receipt no., issuer and payee carry over automatically.</p>
++      <div class="form-grid">
++        <div class="field">
++          <label>New cheque no *</label>
++          <input name="chqNo" type="text" required>
++        </div>
++        <div class="field">
++          <label>New cheque date *</label>
++          <input name="chqDate" type="date" required>
++        </div>
++        <div class="field">
++          <label>Amount</label>
++          <input name="amount" type="number" step="0.01" min="0.01" value="${c.amount}">
++        </div>
++        <div class="field">
++          <label>Drawee bank</label>
++          <select name="bankId">${selectOptions(state.banks, 'id', (b) => b.name, 'Same as original')}</select>
++        </div>
++      </div>
++      <div class="form-actions">
++        <button type="button" class="btn btn-ghost" id="cancel-replace">Cancel</button>
++        <button type="submit" class="btn btn-primary">Create replacement</button>
++      </div>
++    </form>`;
++  openModal(`Issue replacement — for ${escapeHtml(c.chqNo)}`, body, {
++    onMount: () => {
++      const form = document.getElementById('form-replace');
++      document.getElementById('cancel-replace').addEventListener('click', closeModal);
++      form.addEventListener('submit', async (e) => {
++        e.preventDefault();
++        clearFormError(form);
++        const data = Object.fromEntries(new FormData(form).entries());
++        if (!data.bankId) delete data.bankId;
++        try {
++          const replacement = await api(`/cheques/${c.id}/replace`, { method: 'POST', body: JSON.stringify(data) });
++          toast('Replacement cheque created', 'success');
++          closeModal();
++          openChequeDetail(replacement.id);
++          loadReceived();
++        } catch (err) {
++          formError(form, err.message);
++        }
++      });
++    },
++  });
++}
+--- cheque-tracker/public/js/issued.js
++++ cheque-tracker/public/js/issued.js
+@@ -1,690 +1,658 @@
+-import { api } from './api.js';
+-import { toast } from './toast.js';
+-import { state } from './state.js';
+-import { openModal, closeModal, formError, clearFormError, openConfirmModal } from './modal.js';
+-import { openDrawer, closeDrawer } from './drawer.js';
+-import { escapeHtml, fmtDate, fmtDateStacked, fmtMoney, fmtDateInput, humanize, statusTag, selectOptions, enumOptions, debounce, daysSince, ageTag, paginationControls, wirePaginationControls } from './utils.js';
+-import { ISSUED_STATUSES, ISSUED_FOLLOWUP_RESPONSES, RETURN_REASONS, PAYMENT_METHODS, CLEARANCE_METHODS, PARTY_TYPES } from './constants.js';
+-import { loadDashboard } from './dashboard.js';
+-import { syncEditableSelect } from './combobox.js';
+-
+-// ============================================================================
+-// ISSUED CHEQUES
+-// ============================================================================
+-const PAGE_SIZE = 50;
+-let issuedPage = 1;
+-
+-export async function loadIssued(page = issuedPage) {
+-  const search = document.getElementById('issued-search').value;
+-  const status = document.getElementById('issued-status-filter').value;
+-  const params = new URLSearchParams();
+-  if (search) params.set('search', search);
+-  if (status) params.set('status', status);
+-  params.set('page', page);
+-  params.set('pageSize', PAGE_SIZE);
+-
+-  try {
+-    const { cheques, total } = await api(`/issued-cheques?${params.toString()}`);
+-    issuedPage = page;
+-    renderIssuedTable(cheques, total, page);
+-  } catch (err) {
+-    toast(err.message, 'error');
+-  }
+-}
+-
+-function renderIssuedTable(cheques, total, page) {
+-  const el = document.getElementById('issued-table');
+-  if (!cheques.length) {
+-    el.innerHTML = `<table class="ledger"><tbody><tr class="empty-row"><td>No issued cheques match. Try clearing filters, or issue a new cheque.</td></tr></tbody></table>`;
+-    return;
+-  }
+-  el.innerHTML = `
+-    <table class="ledger">
+-      <thead><tr>
+-        <th>Cheque no</th><th>Cheque date</th><th>Payee</th><th>Amount</th>
+-        <th>Bank · account</th><th>Status</th><th>Age</th><th>Purpose</th>
+-      </tr></thead>
+-      <tbody>
+-        ${cheques.map((c) => {
+-          // "Age" tracks how long a cheque has sat in its current status.
+-          // For a cleared cheque that's a fixed, historical span (totalDays,
+-          // computed once at clearance); for anything still in play it's
+-          // live — days since the last status change, as of right now.
+-          const ageDays = c.status === 'CLEARED' ? c.totalDays : daysSince(c.statusDate);
+-          const bankAccount = [c.companyBankAccount?.bank?.name, c.companyBankAccount?.accountName]
+-            .filter(Boolean).join(' · ') || '—';
+-          return `
+-          <tr data-id="${c.id}">
+-            <td class="num">${escapeHtml(c.chqNo)}</td>
+-            <td class="num">${fmtDateStacked(c.chqDate)}</td>
+-            <td>${escapeHtml(c.payeeName)}</td>
+-            <td class="amount">${fmtMoney(c.amount)}</td>
+-            <td>${escapeHtml(bankAccount)}</td>
+-            <td>${statusTag(c.status)}</td>
+-            <td>${ageTag(ageDays)}</td>
+-            <td class="cell-truncate" title="${escapeHtml(c.purpose || '')}">${escapeHtml(c.purpose || '—')}</td>
+-          </tr>`;
+-        }).join('')}
+-      </tbody>
+-    </table>
+-    ${paginationControls(total, page, PAGE_SIZE)}`;
+-  el.querySelectorAll('tr[data-id]').forEach((row) => {
+-    row.addEventListener('click', () => openIssuedDetail(row.dataset.id));
+-  });
+-  wirePaginationControls(el, total, page, loadIssued, PAGE_SIZE);
+-}
+-
+-document.getElementById('issued-search').addEventListener('input', debounce(() => loadIssued(1), 300));
+-document.getElementById('issued-status-filter').addEventListener('change', () => loadIssued(1));
+-
+-document.getElementById('btn-new-issued').addEventListener('click', () => openNewIssuedModal());
+-
+-function openNewIssuedModal() {
+-  const body = `
+-    <form id="form-new-issued">
+-      <div class="form-error"></div>
+-      <div class="form-grid">
+-        <div class="field span-2">
+-          <label>Our bank account *</label>
+-          <select name="companyBankAccountId" required>${selectOptions(state.accounts, 'id', (a) => `${a.accountName} — ${a.bank?.name || ''}`, 'Select account…')}</select>
+-        </div>
+-        <div class="field">
+-          <label>Cheque no *</label>
+-          <input name="chqNo" type="text" required>
+-        </div>
+-        <div class="field">
+-          <label>Cheque date *</label>
+-          <input name="chqDate" type="date" required>
+-        </div>
+-        <div class="field span-2">
+-          <label>Payee party (optional)</label>
+-          <select name="payeeId">${selectOptions(state.parties, 'id', (p) => p.name, 'Not in party list')}</select>
+-        </div>
+-        <div class="field">
+-          <label>Payee name on cheque *</label>
+-          <input name="payeeName" type="text" required>
+-        </div>
+-        <div class="field">
+-          <label>Payee type *</label>
+-          <select name="payeeType" required>${enumOptions(PARTY_TYPES)}</select>
+-        </div>
+-        <div class="field">
+-          <label>Amount *</label>
+-          <input name="amount" type="number" step="0.01" min="0.01" required>
+-        </div>
+-        <div class="field">
+-          <label>Issued by staff</label>
+-          <select name="issuedById">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
+-        </div>
+-        <div class="field span-2">
+-          <label>Purpose</label>
+-          <textarea name="purpose"></textarea>
+-        </div>
+-      </div>
+-      <div class="form-actions">
+-        <button type="button" class="btn btn-ghost" id="cancel-new-issued">Cancel</button>
+-        <button type="submit" class="btn btn-primary">Save cheque</button>
+-      </div>
+-    </form>`;
+-
+-  openModal('New issued cheque', body, {
+-    onMount: () => {
+-      const form = document.getElementById('form-new-issued');
+-      document.getElementById('cancel-new-issued').addEventListener('click', closeModal);
+-      form.addEventListener('submit', async (e) => {
+-        e.preventDefault();
+-        clearFormError(form);
+-        const data = Object.fromEntries(new FormData(form).entries());
+-        if (!data.payeeId) delete data.payeeId;
+-        try {
+-          await api('/issued-cheques', { method: 'POST', body: JSON.stringify(data) });
+-          toast('Issued cheque recorded', 'success');
+-          closeModal();
+-          loadIssued();
+-          loadDashboard();
+-        } catch (err) {
+-          formError(form, err.message);
+-        }
+-      });
+-    },
+-  });
+-}
+-
+-async function openIssuedDetail(id) {
+-  try {
+-    const c = await api(`/issued-cheques/${id}`);
+-    renderIssuedDrawer(c);
+-  } catch (err) {
+-    toast(err.message, 'error');
+-  }
+-}
+-
+-function renderIssuedDrawer(c) {
+-  const canFollowUp = c.status === 'RETURNED';
+-  const canPay = !['CLEARED'].includes(c.status);
+-  const canCheckLog = c.status !== 'ON_CHECK';
+-  const canReplace = c.status === 'RETURNED' && !c.replacedBy;
+-  const canStop = ['ISSUED', 'FOLLOWUP'].includes(c.status);
+-  const openCheckLog = c.checkLogs.find((l) => !l.resolvedAt);
+-
+-  const html = `
+-    <div class="drawer-header">
+-      <div>
+-        <h2>Issued cheque ${escapeHtml(c.chqNo)}</h2>
+-        <p class="hint" style="margin-top:0.2rem">${escapeHtml(c.payeeName)} · ${fmtDate(c.chqDate)}</p>
+-      </div>
+-      <button class="drawer-close" id="drawer-close-btn" aria-label="Close">×</button>
+-    </div>
+-
+-    <div>${statusTag(c.status)} <span class="muted num" style="font-size:0.8rem">since ${fmtDate(c.statusDate)}${c.totalDays != null ? ` · ${c.totalDays}d` : ''}</span></div>
+-
+-    <dl class="detail-grid">
+-      <div class="detail-field"><dt>Amount</dt><dd>Rs ${fmtMoney(c.amount)}</dd></div>
+-      <div class="detail-field"><dt>Our account</dt><dd>${escapeHtml(c.companyBankAccount?.accountName || '—')}</dd></div>
+-      <div class="detail-field"><dt>Bank</dt><dd>${escapeHtml(c.companyBankAccount?.bank?.name || '—')}</dd></div>
+-      <div class="detail-field"><dt>Payee type</dt><dd>${humanize(c.payeeType)}</dd></div>
+-      <div class="detail-field"><dt>Cheque type</dt><dd>${humanize(c.chequeType)}</dd></div>
+-      <div class="detail-field"><dt>Issued by</dt><dd>${escapeHtml(c.issuedBy?.name || '—')}</dd></div>
+-      ${c.purpose ? `<div class="detail-field"><dt>Purpose</dt><dd>${escapeHtml(c.purpose)}</dd></div>` : ''}
+-      ${c.clearanceMethod ? `<div class="detail-field"><dt>Cleared via</dt><dd>${humanize(c.clearanceMethod)}</dd></div>` : ''}
+-      ${c.returnReason ? `<div class="detail-field"><dt>Return reason</dt><dd>${humanize(c.returnReason)}</dd></div>` : ''}
+-      ${c.replaces ? `<div class="detail-field"><dt>Replaces</dt><dd class="num">${escapeHtml(c.replaces.chqNo)}</dd></div>` : ''}
+-      ${c.replacedBy ? `<div class="detail-field"><dt>Replaced by</dt><dd class="num">${escapeHtml(c.replacedBy.chqNo)}</dd></div>` : ''}
+-    </dl>
+-
+-    <div class="action-row">
+-      <button class="btn btn-sm" data-action="status">Change status</button>
+-      ${canStop ? `<button class="btn btn-sm btn-danger" data-action="stop">Stop payment</button>` : ''}
+-      ${canFollowUp ? `<button class="btn btn-sm" data-action="followup">Log follow-up</button>` : ''}
+-      ${canPay ? `<button class="btn btn-sm" data-action="payment">Record settlement</button>` : ''}
+-      ${canCheckLog ? `<button class="btn btn-sm" data-action="checklog">Flag for check</button>` : ''}
+-      ${openCheckLog ? `<button class="btn btn-sm" data-action="resolve-checklog" data-log-id="${openCheckLog.id}">Resolve check</button>` : ''}
+-      ${canReplace ? `<button class="btn btn-sm" data-action="replace">Issue replacement</button>` : ''}
+-      <button class="btn btn-sm" data-action="edit">Edit details</button>
+-      <button class="btn btn-sm btn-danger" data-action="delete">Delete cheque</button>
+-    </div>
+-
+-    <div class="section-title">Follow-ups</div>
+-    <div class="timeline">
+-      ${c.followUps.length ? c.followUps.map((f) => `
+-        <div class="timeline-item">
+-          <div class="ti-head"><span>${humanize(f.response)}</span><span class="ti-meta">${fmtDate(f.followUpDate)}</span></div>
+-          ${f.note ? `<div>${escapeHtml(f.note)}</div>` : ''}
+-          ${f.nextActionDate ? `<div class="ti-meta">Next action: ${fmtDate(f.nextActionDate)}</div>` : ''}
+-        </div>`).join('') : `<p class="timeline-empty">No follow-ups logged yet.</p>`}
+-    </div>
+-
+-    <div class="section-title">Settlements</div>
+-    <div class="timeline">
+-      ${c.payments.length ? c.payments.map((p) => `
+-        <div class="timeline-item payment">
+-          <div class="ti-head"><span>Rs ${fmtMoney(p.amount)} · ${humanize(p.method)}</span><span class="ti-meta">${fmtDate(p.paymentDate)}</span></div>
+-          ${p.referenceNo ? `<div class="ti-meta">Ref: ${escapeHtml(p.referenceNo)}</div>` : ''}
+-          ${p.note ? `<div>${escapeHtml(p.note)}</div>` : ''}
+-        </div>`).join('') : `<p class="timeline-empty">No settlements recorded yet.</p>`}
+-    </div>
+-
+-    <div class="section-title">Check log</div>
+-    <div class="timeline">
+-      ${c.checkLogs.length ? c.checkLogs.map((l) => `
+-        <div class="timeline-item checklog">
+-          <div class="ti-head"><span>${l.resolvedAt ? `Resolved → ${humanize(l.resolvedStatus)}` : 'Open investigation'}</span><span class="ti-meta">${fmtDate(l.raisedAt)}</span></div>
+-          <div>${escapeHtml(l.reason)}</div>
+-          ${l.resolutionNote ? `<div class="ti-meta">${escapeHtml(l.resolutionNote)}</div>` : ''}
+-        </div>`).join('') : `<p class="timeline-empty">Never flagged for manual re-verification.</p>`}
+-    </div>
+-  `;
+-
+-  openDrawer(html);
+-  document.getElementById('drawer-close-btn').addEventListener('click', closeDrawer);
+-  wireIssuedActions(c);
+-}
+-
+-function wireIssuedActions(c) {
+-  const root = document.getElementById('drawer-content');
+-  root.querySelectorAll('[data-action]').forEach((btn) => {
+-    btn.addEventListener('click', () => {
+-      const action = btn.dataset.action;
+-      if (action === 'status') openIssuedStatusModal(c);
+-      if (action === 'stop') stopIssuedCheque(c);
+-      if (action === 'followup') openIssuedFollowUpModal(c);
+-      if (action === 'payment') openIssuedPaymentModal(c);
+-      if (action === 'checklog') openIssuedCheckLogModal(c);
+-      if (action === 'resolve-checklog') openIssuedResolveCheckLogModal(c, btn.dataset.logId);
+-      if (action === 'replace') openIssuedReplaceModal(c);
+-      if (action === 'edit') openIssuedEditModal(c);
+-      if (action === 'delete') deleteIssuedCheque(c);
+-    });
+-  });
+-}
+-
+-function openIssuedEditModal(c) {
+-  const body = `
+-    <form id="form-edit-issued">
+-      <div class="form-error"></div>
+-      <div class="form-grid">
+-        <div class="field">
+-          <label>Amount *</label>
+-          <input name="amount" type="number" step="0.01" min="0.01" required value="${escapeHtml(c.amount)}">
+-        </div>
+-        <div class="field">
+-          <label>Issued by staff</label>
+-          <select name="issuedById">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
+-        </div>
+-        <div class="field span-2">
+-          <label>Purpose</label>
+-          <textarea name="purpose">${escapeHtml(c.purpose || '')}</textarea>
+-        </div>
+-      </div>
+-
+-      <div class="section-title" style="margin-top:1rem">Risky fields</div>
+-      <p class="hint" style="margin-top:0">These affect the account/cheque-no uniqueness check and the lifecycle day-count. You'll be asked to confirm if you change any of them.</p>
+-      <div class="form-grid">
+-        <div class="field">
+-          <label>Cheque date *</label>
+-          <input name="chqDate" type="date" required value="${fmtDateInput(c.chqDate)}">
+-        </div>
+-        <div class="field">
+-          <label>Cheque no *</label>
+-          <input name="chqNo" type="text" required value="${escapeHtml(c.chqNo)}">
+-        </div>
+-        <div class="field span-2">
+-          <label>Our account *</label>
+-          <select name="companyBankAccountId" required>${selectOptions(state.accounts, 'id', (a) => `${a.accountName} — ${a.bank?.name || ''}`, 'Select account…')}</select>
+-        </div>
+-        <div class="field">
+-          <label>Payee type *</label>
+-          <select name="payeeType" required>${enumOptions(PARTY_TYPES)}</select>
+-        </div>
+-      </div>
+-
+-      <div class="form-actions">
+-        <button type="button" class="btn btn-ghost" id="cancel-edit-issued">Cancel</button>
+-        <button type="submit" class="btn btn-primary">Save changes</button>
+-      </div>
+-    </form>`;
+-  openModal(`Edit issued cheque — ${escapeHtml(c.chqNo)}`, body, {
+-    onMount: () => {
+-      const form = document.getElementById('form-edit-issued');
+-      form.querySelector('[name="issuedById"]').value = c.issuedById || '';
+-      syncEditableSelect(form.querySelector('[name="issuedById"]'));
+-      form.querySelector('[name="companyBankAccountId"]').value = c.companyBankAccountId;
+-      syncEditableSelect(form.querySelector('[name="companyBankAccountId"]'));
+-      form.querySelector('[name="payeeType"]').value = c.payeeType;
+-      document.getElementById('cancel-edit-issued').addEventListener('click', closeModal);
+-      form.addEventListener('submit', async (e) => {
+-        e.preventDefault();
+-        clearFormError(form);
+-        const data = Object.fromEntries(new FormData(form).entries());
+-
+-        const riskyChanged = data.chqDate !== fmtDateInput(c.chqDate)
+-          || data.chqNo !== c.chqNo
+-          || data.companyBankAccountId !== c.companyBankAccountId
+-          || data.payeeType !== c.payeeType;
+-        if (riskyChanged) {
+-          const ok = await openConfirmModal(
+-            'Change risky fields?',
+-            'You\'re changing the cheque date, cheque no, our account, or payee type. These affect the uniqueness check and the lifecycle day-count for this cheque. Continue?',
+-            { confirmLabel: 'Save changes', danger: false },
+-          );
+-          if (!ok) return;
+-        }
+-
+-        try {
+-          await api(`/issued-cheques/${c.id}`, { method: 'PATCH', body: JSON.stringify(data) });
+-          toast('Issued cheque updated', 'success');
+-          closeModal();
+-          openIssuedDetail(c.id);
+-          loadIssued();
+-          loadDashboard();
+-        } catch (err) {
+-          formError(form, err.message);
+-        }
+-      });
+-    },
+-  });
+-}
+-
+-async function deleteIssuedCheque(c) {
+-  const ok = await openConfirmModal(
+-    'Delete issued cheque?',
+-    `This removes cheque ${escapeHtml(c.chqNo)} from active lists. Its history is kept, not erased.`,
+-  );
+-  if (!ok) return;
+-  try {
+-    await api(`/issued-cheques/${c.id}`, { method: 'DELETE' });
+-    toast('Issued cheque deleted', 'success');
+-    closeDrawer();
+-    loadIssued();
+-    loadDashboard();
+-  } catch (err) {
+-    toast(err.message, 'error');
+-  }
+-}
+-
+-async function stopIssuedCheque(c) {
+-  if (!confirm(`Mark cheque ${c.chqNo} as stopped? This cannot be undone from here.`)) return;
+-  try {
+-    await api(`/issued-cheques/${c.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'STOPPED' }) });
+-    toast('Payment stopped', 'success');
+-    openIssuedDetail(c.id);
+-    loadIssued();
+-    loadDashboard();
+-  } catch (err) {
+-    toast(err.message, 'error');
+-  }
+-}
+-
+-function openIssuedStatusModal(c) {
+-  const body = `
+-    <form id="form-status">
+-      <div class="form-error"></div>
+-      <div class="form-grid">
+-        <div class="field span-2">
+-          <label>New status *</label>
+-          <select name="status" id="status-select" required>${enumOptions(ISSUED_STATUSES)}</select>
+-        </div>
+-        <div class="field span-2">
+-          <label>Status date *</label>
+-          <input name="statusDate" type="date" id="status-date-input" required value="${fmtDateInput(c.statusDate)}" min="${fmtDateInput(c.chqDate)}">
+-          <span class="hint">Total lifecycle (status date − cheque date) is recalculated from this.</span>
+-        </div>
+-        <div class="field span-2" id="clearance-field" style="display:none">
+-          <label>Clearance method</label>
+-          <select name="clearanceMethod">${enumOptions(CLEARANCE_METHODS)}</select>
+-        </div>
+-        <div class="field" id="return-reason-field" style="display:none">
+-          <label>Return reason</label>
+-          <select name="returnReason">${enumOptions(RETURN_REASONS)}</select>
+-        </div>
+-        <div class="field span-2" id="return-note-field" style="display:none">
+-          <label>Return note</label>
+-          <textarea name="returnNote"></textarea>
+-        </div>
+-      </div>
+-      <div class="form-actions">
+-        <button type="button" class="btn btn-ghost" id="cancel-status">Cancel</button>
+-        <button type="submit" class="btn btn-primary">Update status</button>
+-      </div>
+-    </form>`;
+-  openModal(`Update status — ${escapeHtml(c.chqNo)}`, body, {
+-    onMount: () => {
+-      const form = document.getElementById('form-status');
+-      const select = document.getElementById('status-select');
+-      select.value = c.status;
+-      const toggleFields = () => {
+-        document.getElementById('clearance-field').style.display = select.value === 'CLEARED' ? '' : 'none';
+-        const isReturned = select.value === 'RETURNED';
+-        document.getElementById('return-reason-field').style.display = isReturned ? '' : 'none';
+-        document.getElementById('return-note-field').style.display = isReturned ? '' : 'none';
+-      };
+-      select.addEventListener('change', toggleFields);
+-      toggleFields();
+-      document.getElementById('cancel-status').addEventListener('click', closeModal);
+-      form.addEventListener('submit', async (e) => {
+-        e.preventDefault();
+-        clearFormError(form);
+-        const data = Object.fromEntries(new FormData(form).entries());
+-        try {
+-          await api(`/issued-cheques/${c.id}/status`, { method: 'PATCH', body: JSON.stringify(data) });
+-          toast('Status updated', 'success');
+-          closeModal();
+-          openIssuedDetail(c.id);
+-          loadIssued();
+-          loadDashboard();
+-        } catch (err) {
+-          formError(form, err.message);
+-        }
+-      });
+-    },
+-  });
+-}
+-
+-function openIssuedFollowUpModal(c) {
+-  const body = `
+-    <form id="form-followup">
+-      <div class="form-error"></div>
+-      <div class="form-grid">
+-        <div class="field span-2">
+-          <label>Response *</label>
+-          <select name="response" required>${enumOptions(ISSUED_FOLLOWUP_RESPONSES)}</select>
+-        </div>
+-        <div class="field">
+-          <label>Follow-up date</label>
+-          <input name="followUpDate" type="date" value="${fmtDateInput(new Date())}">
+-        </div>
+-        <div class="field">
+-          <label>Next action date</label>
+-          <input name="nextActionDate" type="date">
+-        </div>
+-        <div class="field span-2">
+-          <label>Staff</label>
+-          <select name="staffId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
+-        </div>
+-        <div class="field span-2">
+-          <label>Note</label>
+-          <textarea name="note"></textarea>
+-        </div>
+-      </div>
+-      <div class="form-actions">
+-        <button type="button" class="btn btn-ghost" id="cancel-followup">Cancel</button>
+-        <button type="submit" class="btn btn-primary">Log follow-up</button>
+-      </div>
+-    </form>`;
+-  openModal(`Log follow-up — ${escapeHtml(c.chqNo)}`, body, {
+-    onMount: () => {
+-      const form = document.getElementById('form-followup');
+-      document.getElementById('cancel-followup').addEventListener('click', closeModal);
+-      form.addEventListener('submit', async (e) => {
+-        e.preventDefault();
+-        clearFormError(form);
+-        const data = Object.fromEntries(new FormData(form).entries());
+-        try {
+-          await api(`/issued-cheques/${c.id}/followups`, { method: 'POST', body: JSON.stringify(data) });
+-          toast('Follow-up logged', 'success');
+-          closeModal();
+-          openIssuedDetail(c.id);
+-          loadIssued();
+-        } catch (err) {
+-          formError(form, err.message);
+-        }
+-      });
+-    },
+-  });
+-}
+-
+-function openIssuedPaymentModal(c) {
+-  const alreadyPaid = c.payments.reduce((s, p) => s + Number(p.amount), 0);
+-  const remaining = Number(c.amount) - alreadyPaid;
+-  const body = `
+-    <form id="form-payment">
+-      <div class="form-error"></div>
+-      <p class="hint">Remaining balance: Rs ${fmtMoney(remaining)}</p>
+-      <div class="form-grid">
+-        <div class="field">
+-          <label>Amount *</label>
+-          <input name="amount" type="number" step="0.01" min="0.01" max="${remaining}" required>
+-        </div>
+-        <div class="field">
+-          <label>Method *</label>
+-          <select name="method" required>${enumOptions(PAYMENT_METHODS)}</select>
+-        </div>
+-        <div class="field">
+-          <label>Payment date</label>
+-          <input name="paymentDate" type="date" value="${fmtDateInput(new Date())}">
+-        </div>
+-        <div class="field">
+-          <label>Reference no</label>
+-          <input name="referenceNo" type="text">
+-        </div>
+-        <div class="field span-2">
+-          <label>Staff</label>
+-          <select name="staffId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
+-        </div>
+-        <div class="field span-2">
+-          <label>Note</label>
+-          <textarea name="note"></textarea>
+-        </div>
+-      </div>
+-      <div class="form-actions">
+-        <button type="button" class="btn btn-ghost" id="cancel-payment">Cancel</button>
+-        <button type="submit" class="btn btn-primary">Record settlement</button>
+-      </div>
+-    </form>`;
+-  openModal(`Record settlement — ${escapeHtml(c.chqNo)}`, body, {
+-    onMount: () => {
+-      const form = document.getElementById('form-payment');
+-      document.getElementById('cancel-payment').addEventListener('click', closeModal);
+-      form.addEventListener('submit', async (e) => {
+-        e.preventDefault();
+-        clearFormError(form);
+-        const data = Object.fromEntries(new FormData(form).entries());
+-        try {
+-          await api(`/issued-cheques/${c.id}/payments`, { method: 'POST', body: JSON.stringify(data) });
+-          toast('Settlement recorded', 'success');
+-          closeModal();
+-          openIssuedDetail(c.id);
+-          loadIssued();
+-          loadDashboard();
+-        } catch (err) {
+-          formError(form, err.message);
+-        }
+-      });
+-    },
+-  });
+-}
+-
+-function openIssuedCheckLogModal(c) {
+-  const body = `
+-    <form id="form-checklog">
+-      <div class="form-error"></div>
+-      <div class="form-grid">
+-        <div class="field span-2">
+-          <label>Reason *</label>
+-          <textarea name="reason" required placeholder="e.g. cheque stub vs bank statement mismatch"></textarea>
+-        </div>
+-        <div class="field span-2">
+-          <label>Raised by</label>
+-          <select name="raisedById">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
+-        </div>
+-      </div>
+-      <div class="form-actions">
+-        <button type="button" class="btn btn-ghost" id="cancel-checklog">Cancel</button>
+-        <button type="submit" class="btn btn-primary">Flag for check</button>
+-      </div>
+-    </form>`;
+-  openModal(`Flag for manual check — ${escapeHtml(c.chqNo)}`, body, {
+-    onMount: () => {
+-      const form = document.getElementById('form-checklog');
+-      document.getElementById('cancel-checklog').addEventListener('click', closeModal);
+-      form.addEventListener('submit', async (e) => {
+-        e.preventDefault();
+-        clearFormError(form);
+-        const data = Object.fromEntries(new FormData(form).entries());
+-        try {
+-          await api(`/issued-cheques/${c.id}/checklogs`, { method: 'POST', body: JSON.stringify(data) });
+-          toast('Cheque flagged for check', 'success');
+-          closeModal();
+-          openIssuedDetail(c.id);
+-          loadIssued();
+-          loadDashboard();
+-        } catch (err) {
+-          formError(form, err.message);
+-        }
+-      });
+-    },
+-  });
+-}
+-
+-function openIssuedResolveCheckLogModal(c, logId) {
+-  const body = `
+-    <form id="form-resolve">
+-      <div class="form-error"></div>
+-      <div class="form-grid">
+-        <div class="field span-2">
+-          <label>Actual status *</label>
+-          <select name="resolvedStatus" required>${enumOptions(ISSUED_STATUSES.filter((s) => s !== 'ON_CHECK'))}</select>
+-        </div>
+-        <div class="field span-2">
+-          <label>Resolution note</label>
+-          <textarea name="resolutionNote" placeholder="What did you find out?"></textarea>
+-        </div>
+-      </div>
+-      <div class="form-actions">
+-        <button type="button" class="btn btn-ghost" id="cancel-resolve">Cancel</button>
+-        <button type="submit" class="btn btn-primary">Resolve</button>
+-      </div>
+-    </form>`;
+-  openModal(`Resolve check — ${escapeHtml(c.chqNo)}`, body, {
+-    onMount: () => {
+-      const form = document.getElementById('form-resolve');
+-      document.getElementById('cancel-resolve').addEventListener('click', closeModal);
+-      form.addEventListener('submit', async (e) => {
+-        e.preventDefault();
+-        clearFormError(form);
+-        const data = Object.fromEntries(new FormData(form).entries());
+-        try {
+-          await api(`/issued-cheques/${c.id}/checklogs/${logId}/resolve`, { method: 'PATCH', body: JSON.stringify(data) });
+-          toast('Check resolved', 'success');
+-          closeModal();
+-          openIssuedDetail(c.id);
+-          loadIssued();
+-          loadDashboard();
+-        } catch (err) {
+-          formError(form, err.message);
+-        }
+-      });
+-    },
+-  });
+-}
+-
+-function openIssuedReplaceModal(c) {
+-  const body = `
+-    <form id="form-replace">
+-      <div class="form-error"></div>
+-      <p class="hint">Same payee carries over automatically.</p>
+-      <div class="form-grid">
+-        <div class="field">
+-          <label>New cheque no *</label>
+-          <input name="chqNo" type="text" required>
+-        </div>
+-        <div class="field">
+-          <label>New cheque date *</label>
+-          <input name="chqDate" type="date" required>
+-        </div>
+-        <div class="field">
+-          <label>Amount</label>
+-          <input name="amount" type="number" step="0.01" min="0.01" value="${c.amount}">
+-        </div>
+-        <div class="field">
+-          <label>Our account</label>
+-          <select name="companyBankAccountId">${selectOptions(state.accounts, 'id', (a) => a.accountName, 'Same as original')}</select>
+-        </div>
+-      </div>
+-      <div class="form-actions">
+-        <button type="button" class="btn btn-ghost" id="cancel-replace">Cancel</button>
+-        <button type="submit" class="btn btn-primary">Create replacement</button>
+-      </div>
+-    </form>`;
+-  openModal(`Issue replacement — for ${escapeHtml(c.chqNo)}`, body, {
+-    onMount: () => {
+-      const form = document.getElementById('form-replace');
+-      document.getElementById('cancel-replace').addEventListener('click', closeModal);
+-      form.addEventListener('submit', async (e) => {
+-        e.preventDefault();
+-        clearFormError(form);
+-        const data = Object.fromEntries(new FormData(form).entries());
+-        if (!data.companyBankAccountId) delete data.companyBankAccountId;
+-        try {
+-          const replacement = await api(`/issued-cheques/${c.id}/replace`, { method: 'POST', body: JSON.stringify(data) });
+-          toast('Replacement cheque created', 'success');
+-          closeModal();
+-          openIssuedDetail(replacement.id);
+-          loadIssued();
+-        } catch (err) {
+-          formError(form, err.message);
+-        }
+-      });
+-    },
+-  });
+-}
++import { api } from './api.js';
++import { toast } from './toast.js';
++import { state } from './state.js';
++import { openModal, closeModal, formError, clearFormError, openConfirmModal } from './modal.js';
++import { openDrawer, closeDrawer } from './drawer.js';
++import { escapeHtml, fmtDate, fmtDateStacked, fmtMoney, fmtDateInput, humanize, statusTag, selectOptions, enumOptions, debounce, daysSince, ageTag, paginationControls, wirePaginationControls } from './utils.js';
++import { ISSUED_STATUSES, ISSUED_FOLLOWUP_RESPONSES, RETURN_REASONS, PAYMENT_METHODS, CLEARANCE_METHODS, PARTY_TYPES } from './constants.js';
++import { loadDashboard } from './dashboard.js';
++import { syncEditableSelect } from './combobox.js';
++
++// ============================================================================
++// ISSUED CHEQUES
++// ============================================================================
++const PAGE_SIZE = 50;
++let issuedPage = 1;
++
++export async function loadIssued(page = issuedPage) {
++  const search = document.getElementById('issued-search').value;
++  const status = document.getElementById('issued-status-filter').value;
++  const params = new URLSearchParams();
++  if (search) params.set('search', search);
++  if (status) params.set('status', status);
++  params.set('page', page);
++  params.set('pageSize', PAGE_SIZE);
++
++  try {
++    const { cheques, total } = await api(`/issued-cheques?${params.toString()}`);
++    issuedPage = page;
++    renderIssuedTable(cheques, total, page);
++  } catch (err) {
++    toast(err.message, 'error');
++  }
++}
++
++function renderIssuedTable(cheques, total, page) {
++  const el=document.getElementById('issued-table');
++  if(!cheques.length){el.innerHTML=`<table class="ledger cheque-register"><tbody><tr class="empty-row"><td>No issued cheques match. Try clearing filters, or issue a new cheque.</td></tr></tbody></table>`;return;}
++  el.innerHTML=`<div class="cheque-table-wrap"><table class="ledger cheque-register"><thead><tr><th class="cheque-expand-col" aria-label="Details"></th><th>Cheque / date</th><th>Payee</th><th>Bank / account</th><th class="amount-head">Amount</th><th>Status</th><th>Age</th></tr></thead><tbody>${cheques.map(c=>{const ageDays=c.status==='CLEARED'?c.totalDays:daysSince(c.statusDate);return `<tr class="cheque-main-row" data-id="${c.id}"><td class="cheque-expand-col"><button class="cheque-expand-btn" type="button" aria-expanded="false" aria-label="Show details">+</button></td><td><div class="cheque-primary num">${escapeHtml(c.chqNo)}</div><div class="cheque-secondary">${fmtDateStacked(c.chqDate)}</div></td><td><div class="cheque-primary">${escapeHtml(c.payeeName)}</div><div class="cheque-secondary">${humanize(c.payeeType)}</div></td><td><div class="cheque-primary">${escapeHtml(c.companyBankAccount?.bank?.name||'—')}</div><div class="cheque-secondary">${escapeHtml(c.companyBankAccount?.accountName||'Account not set')}</div></td><td class="amount">${fmtMoney(c.amount)}</td><td>${statusTag(c.status)}</td><td>${ageTag(ageDays)}</td></tr><tr class="cheque-detail-row" data-detail-for="${c.id}" hidden><td colspan="7"><div class="cheque-detail-grid"><div><span>Purpose</span><strong>${escapeHtml(c.purpose||'—')}</strong></div><div><span>Payee type</span><strong>${humanize(c.payeeType)}</strong></div><div><span>Cheque type</span><strong>${humanize(c.chequeType)}</strong></div><div><span>Issued by</span><strong>${escapeHtml(c.issuedBy?.name||'Unassigned')}</strong></div><div><span>Status since</span><strong>${fmtDate(c.statusDate)}</strong></div><div><span>Age</span><strong>${ageTag(ageDays)}</strong></div></div><button class="btn btn-sm cheque-open-detail" type="button" data-open-id="${c.id}">Open full record →</button></td></tr>`;}).join('')}</tbody></table></div>${paginationControls(total,page,PAGE_SIZE)}`;
++  el.querySelectorAll('.cheque-main-row').forEach(row=>row.addEventListener('click',e=>{if(!e.target.closest('.cheque-expand-btn'))openIssuedDetail(row.dataset.id);}));
++  el.querySelectorAll('.cheque-expand-btn').forEach(btn=>btn.addEventListener('click',e=>{e.stopPropagation();const d=el.querySelector(`[data-detail-for="${btn.closest('tr').dataset.id}"]`);const open=!d.hidden;d.hidden=open;btn.textContent=open?'+':'−';btn.setAttribute('aria-expanded',String(!open));}));
++  el.querySelectorAll('.cheque-open-detail').forEach(btn=>btn.addEventListener('click',()=>openIssuedDetail(btn.dataset.openId)));
++  wirePaginationControls(el,total,page,loadIssued,PAGE_SIZE);
++}
++
++document.getElementById('issued-search').addEventListener('input', debounce(() => loadIssued(1), 300));
++document.getElementById('issued-status-filter').addEventListener('change', () => loadIssued(1));
++
++document.getElementById('btn-new-issued').addEventListener('click', () => openNewIssuedModal());
++
++function openNewIssuedModal() {
++  const body = `
++    <form id="form-new-issued">
++      <div class="form-error"></div>
++      <div class="form-grid">
++        <div class="field span-2">
++          <label>Our bank account *</label>
++          <select name="companyBankAccountId" required>${selectOptions(state.accounts, 'id', (a) => `${a.accountName} — ${a.bank?.name || ''}`, 'Select account…')}</select>
++        </div>
++        <div class="field">
++          <label>Cheque no *</label>
++          <input name="chqNo" type="text" required>
++        </div>
++        <div class="field">
++          <label>Cheque date *</label>
++          <input name="chqDate" type="date" required>
++        </div>
++        <div class="field span-2">
++          <label>Payee party (optional)</label>
++          <select name="payeeId">${selectOptions(state.parties, 'id', (p) => p.name, 'Not in party list')}</select>
++        </div>
++        <div class="field">
++          <label>Payee name on cheque *</label>
++          <input name="payeeName" type="text" required>
++        </div>
++        <div class="field">
++          <label>Payee type *</label>
++          <select name="payeeType" required>${enumOptions(PARTY_TYPES)}</select>
++        </div>
++        <div class="field">
++          <label>Amount *</label>
++          <input name="amount" type="number" step="0.01" min="0.01" required>
++        </div>
++        <div class="field">
++          <label>Issued by staff</label>
++          <select name="issuedById">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
++        </div>
++        <div class="field span-2">
++          <label>Purpose</label>
++          <textarea name="purpose"></textarea>
++        </div>
++      </div>
++      <div class="form-actions">
++        <button type="button" class="btn btn-ghost" id="cancel-new-issued">Cancel</button>
++        <button type="submit" class="btn btn-primary">Save cheque</button>
++      </div>
++    </form>`;
++
++  openModal('New issued cheque', body, {
++    onMount: () => {
++      const form = document.getElementById('form-new-issued');
++      document.getElementById('cancel-new-issued').addEventListener('click', closeModal);
++      form.addEventListener('submit', async (e) => {
++        e.preventDefault();
++        clearFormError(form);
++        const data = Object.fromEntries(new FormData(form).entries());
++        if (!data.payeeId) delete data.payeeId;
++        try {
++          await api('/issued-cheques', { method: 'POST', body: JSON.stringify(data) });
++          toast('Issued cheque recorded', 'success');
++          closeModal();
++          loadIssued();
++          loadDashboard();
++        } catch (err) {
++          formError(form, err.message);
++        }
++      });
++    },
++  });
++}
++
++async function openIssuedDetail(id) {
++  try {
++    const c = await api(`/issued-cheques/${id}`);
++    renderIssuedDrawer(c);
++  } catch (err) {
++    toast(err.message, 'error');
++  }
++}
++
++function renderIssuedDrawer(c) {
++  const canFollowUp = c.status === 'RETURNED';
++  const canPay = !['CLEARED'].includes(c.status);
++  const canCheckLog = c.status !== 'ON_CHECK';
++  const canReplace = c.status === 'RETURNED' && !c.replacedBy;
++  const canStop = ['ISSUED', 'FOLLOWUP'].includes(c.status);
++  const openCheckLog = c.checkLogs.find((l) => !l.resolvedAt);
++
++  const html = `
++    <div class="drawer-header">
++      <div>
++        <h2>Issued cheque ${escapeHtml(c.chqNo)}</h2>
++        <p class="hint" style="margin-top:0.2rem">${escapeHtml(c.payeeName)} · ${fmtDate(c.chqDate)}</p>
++      </div>
++      <button class="drawer-close" id="drawer-close-btn" aria-label="Close">×</button>
++    </div>
++
++    <div>${statusTag(c.status)} <span class="muted num" style="font-size:0.8rem">since ${fmtDate(c.statusDate)}${c.totalDays != null ? ` · ${c.totalDays}d` : ''}</span></div>
++
++    <dl class="detail-grid">
++      <div class="detail-field"><dt>Amount</dt><dd>Rs ${fmtMoney(c.amount)}</dd></div>
++      <div class="detail-field"><dt>Our account</dt><dd>${escapeHtml(c.companyBankAccount?.accountName || '—')}</dd></div>
++      <div class="detail-field"><dt>Bank</dt><dd>${escapeHtml(c.companyBankAccount?.bank?.name || '—')}</dd></div>
++      <div class="detail-field"><dt>Payee type</dt><dd>${humanize(c.payeeType)}</dd></div>
++      <div class="detail-field"><dt>Cheque type</dt><dd>${humanize(c.chequeType)}</dd></div>
++      <div class="detail-field"><dt>Issued by</dt><dd>${escapeHtml(c.issuedBy?.name || '—')}</dd></div>
++      ${c.purpose ? `<div class="detail-field"><dt>Purpose</dt><dd>${escapeHtml(c.purpose)}</dd></div>` : ''}
++      ${c.clearanceMethod ? `<div class="detail-field"><dt>Cleared via</dt><dd>${humanize(c.clearanceMethod)}</dd></div>` : ''}
++      ${c.returnReason ? `<div class="detail-field"><dt>Return reason</dt><dd>${humanize(c.returnReason)}</dd></div>` : ''}
++      ${c.replaces ? `<div class="detail-field"><dt>Replaces</dt><dd class="num">${escapeHtml(c.replaces.chqNo)}</dd></div>` : ''}
++      ${c.replacedBy ? `<div class="detail-field"><dt>Replaced by</dt><dd class="num">${escapeHtml(c.replacedBy.chqNo)}</dd></div>` : ''}
++    </dl>
++
++    <div class="action-row">
++      <button class="btn btn-sm" data-action="status">Change status</button>
++      ${canStop ? `<button class="btn btn-sm btn-danger" data-action="stop">Stop payment</button>` : ''}
++      ${canFollowUp ? `<button class="btn btn-sm" data-action="followup">Log follow-up</button>` : ''}
++      ${canPay ? `<button class="btn btn-sm" data-action="payment">Record settlement</button>` : ''}
++      ${canCheckLog ? `<button class="btn btn-sm" data-action="checklog">Flag for check</button>` : ''}
++      ${openCheckLog ? `<button class="btn btn-sm" data-action="resolve-checklog" data-log-id="${openCheckLog.id}">Resolve check</button>` : ''}
++      ${canReplace ? `<button class="btn btn-sm" data-action="replace">Issue replacement</button>` : ''}
++      <button class="btn btn-sm" data-action="edit">Edit details</button>
++      <button class="btn btn-sm btn-danger" data-action="delete">Delete cheque</button>
++    </div>
++
++    <div class="section-title">Follow-ups</div>
++    <div class="timeline">
++      ${c.followUps.length ? c.followUps.map((f) => `
++        <div class="timeline-item">
++          <div class="ti-head"><span>${humanize(f.response)}</span><span class="ti-meta">${fmtDate(f.followUpDate)}</span></div>
++          ${f.note ? `<div>${escapeHtml(f.note)}</div>` : ''}
++          ${f.nextActionDate ? `<div class="ti-meta">Next action: ${fmtDate(f.nextActionDate)}</div>` : ''}
++        </div>`).join('') : `<p class="timeline-empty">No follow-ups logged yet.</p>`}
++    </div>
++
++    <div class="section-title">Settlements</div>
++    <div class="timeline">
++      ${c.payments.length ? c.payments.map((p) => `
++        <div class="timeline-item payment">
++          <div class="ti-head"><span>Rs ${fmtMoney(p.amount)} · ${humanize(p.method)}</span><span class="ti-meta">${fmtDate(p.paymentDate)}</span></div>
++          ${p.referenceNo ? `<div class="ti-meta">Ref: ${escapeHtml(p.referenceNo)}</div>` : ''}
++          ${p.note ? `<div>${escapeHtml(p.note)}</div>` : ''}
++        </div>`).join('') : `<p class="timeline-empty">No settlements recorded yet.</p>`}
++    </div>
++
++    <div class="section-title">Check log</div>
++    <div class="timeline">
++      ${c.checkLogs.length ? c.checkLogs.map((l) => `
++        <div class="timeline-item checklog">
++          <div class="ti-head"><span>${l.resolvedAt ? `Resolved → ${humanize(l.resolvedStatus)}` : 'Open investigation'}</span><span class="ti-meta">${fmtDate(l.raisedAt)}</span></div>
++          <div>${escapeHtml(l.reason)}</div>
++          ${l.resolutionNote ? `<div class="ti-meta">${escapeHtml(l.resolutionNote)}</div>` : ''}
++        </div>`).join('') : `<p class="timeline-empty">Never flagged for manual re-verification.</p>`}
++    </div>
++  `;
++
++  openDrawer(html);
++  document.getElementById('drawer-close-btn').addEventListener('click', closeDrawer);
++  wireIssuedActions(c);
++}
++
++function wireIssuedActions(c) {
++  const root = document.getElementById('drawer-content');
++  root.querySelectorAll('[data-action]').forEach((btn) => {
++    btn.addEventListener('click', () => {
++      const action = btn.dataset.action;
++      if (action === 'status') openIssuedStatusModal(c);
++      if (action === 'stop') stopIssuedCheque(c);
++      if (action === 'followup') openIssuedFollowUpModal(c);
++      if (action === 'payment') openIssuedPaymentModal(c);
++      if (action === 'checklog') openIssuedCheckLogModal(c);
++      if (action === 'resolve-checklog') openIssuedResolveCheckLogModal(c, btn.dataset.logId);
++      if (action === 'replace') openIssuedReplaceModal(c);
++      if (action === 'edit') openIssuedEditModal(c);
++      if (action === 'delete') deleteIssuedCheque(c);
++    });
++  });
++}
++
++function openIssuedEditModal(c) {
++  const body = `
++    <form id="form-edit-issued">
++      <div class="form-error"></div>
++      <div class="form-grid">
++        <div class="field">
++          <label>Amount *</label>
++          <input name="amount" type="number" step="0.01" min="0.01" required value="${escapeHtml(c.amount)}">
++        </div>
++        <div class="field">
++          <label>Issued by staff</label>
++          <select name="issuedById">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
++        </div>
++        <div class="field span-2">
++          <label>Purpose</label>
++          <textarea name="purpose">${escapeHtml(c.purpose || '')}</textarea>
++        </div>
++      </div>
++
++      <div class="section-title" style="margin-top:1rem">Risky fields</div>
++      <p class="hint" style="margin-top:0">These affect the account/cheque-no uniqueness check and the lifecycle day-count. You'll be asked to confirm if you change any of them.</p>
++      <div class="form-grid">
++        <div class="field">
++          <label>Cheque date *</label>
++          <input name="chqDate" type="date" required value="${fmtDateInput(c.chqDate)}">
++        </div>
++        <div class="field">
++          <label>Cheque no *</label>
++          <input name="chqNo" type="text" required value="${escapeHtml(c.chqNo)}">
++        </div>
++        <div class="field span-2">
++          <label>Our account *</label>
++          <select name="companyBankAccountId" required>${selectOptions(state.accounts, 'id', (a) => `${a.accountName} — ${a.bank?.name || ''}`, 'Select account…')}</select>
++        </div>
++        <div class="field">
++          <label>Payee type *</label>
++          <select name="payeeType" required>${enumOptions(PARTY_TYPES)}</select>
++        </div>
++      </div>
++
++      <div class="form-actions">
++        <button type="button" class="btn btn-ghost" id="cancel-edit-issued">Cancel</button>
++        <button type="submit" class="btn btn-primary">Save changes</button>
++      </div>
++    </form>`;
++  openModal(`Edit issued cheque — ${escapeHtml(c.chqNo)}`, body, {
++    onMount: () => {
++      const form = document.getElementById('form-edit-issued');
++      form.querySelector('[name="issuedById"]').value = c.issuedById || '';
++      syncEditableSelect(form.querySelector('[name="issuedById"]'));
++      form.querySelector('[name="companyBankAccountId"]').value = c.companyBankAccountId;
++      syncEditableSelect(form.querySelector('[name="companyBankAccountId"]'));
++      form.querySelector('[name="payeeType"]').value = c.payeeType;
++      document.getElementById('cancel-edit-issued').addEventListener('click', closeModal);
++      form.addEventListener('submit', async (e) => {
++        e.preventDefault();
++        clearFormError(form);
++        const data = Object.fromEntries(new FormData(form).entries());
++
++        const riskyChanged = data.chqDate !== fmtDateInput(c.chqDate)
++          || data.chqNo !== c.chqNo
++          || data.companyBankAccountId !== c.companyBankAccountId
++          || data.payeeType !== c.payeeType;
++        if (riskyChanged) {
++          const ok = await openConfirmModal(
++            'Change risky fields?',
++            'You\'re changing the cheque date, cheque no, our account, or payee type. These affect the uniqueness check and the lifecycle day-count for this cheque. Continue?',
++            { confirmLabel: 'Save changes', danger: false },
++          );
++          if (!ok) return;
++        }
++
++        try {
++          await api(`/issued-cheques/${c.id}`, { method: 'PATCH', body: JSON.stringify(data) });
++          toast('Issued cheque updated', 'success');
++          closeModal();
++          openIssuedDetail(c.id);
++          loadIssued();
++          loadDashboard();
++        } catch (err) {
++          formError(form, err.message);
++        }
++      });
++    },
++  });
++}
++
++async function deleteIssuedCheque(c) {
++  const ok = await openConfirmModal(
++    'Delete issued cheque?',
++    `This removes cheque ${escapeHtml(c.chqNo)} from active lists. Its history is kept, not erased.`,
++  );
++  if (!ok) return;
++  try {
++    await api(`/issued-cheques/${c.id}`, { method: 'DELETE' });
++    toast('Issued cheque deleted', 'success');
++    closeDrawer();
++    loadIssued();
++    loadDashboard();
++  } catch (err) {
++    toast(err.message, 'error');
++  }
++}
++
++async function stopIssuedCheque(c) {
++  if (!confirm(`Mark cheque ${c.chqNo} as stopped? This cannot be undone from here.`)) return;
++  try {
++    await api(`/issued-cheques/${c.id}/status`, { method: 'PATCH', body: JSON.stringify({ status: 'STOPPED' }) });
++    toast('Payment stopped', 'success');
++    openIssuedDetail(c.id);
++    loadIssued();
++    loadDashboard();
++  } catch (err) {
++    toast(err.message, 'error');
++  }
++}
++
++function openIssuedStatusModal(c) {
++  const body = `
++    <form id="form-status">
++      <div class="form-error"></div>
++      <div class="form-grid">
++        <div class="field span-2">
++          <label>New status *</label>
++          <select name="status" id="status-select" required>${enumOptions(ISSUED_STATUSES)}</select>
++        </div>
++        <div class="field span-2">
++          <label>Status date *</label>
++          <input name="statusDate" type="date" id="status-date-input" required value="${fmtDateInput(c.statusDate)}" min="${fmtDateInput(c.chqDate)}">
++          <span class="hint">Total lifecycle (status date − cheque date) is recalculated from this.</span>
++        </div>
++        <div class="field span-2" id="clearance-field" style="display:none">
++          <label>Clearance method</label>
++          <select name="clearanceMethod">${enumOptions(CLEARANCE_METHODS)}</select>
++        </div>
++        <div class="field" id="return-reason-field" style="display:none">
++          <label>Return reason</label>
++          <select name="returnReason">${enumOptions(RETURN_REASONS)}</select>
++        </div>
++        <div class="field span-2" id="return-note-field" style="display:none">
++          <label>Return note</label>
++          <textarea name="returnNote"></textarea>
++        </div>
++      </div>
++      <div class="form-actions">
++        <button type="button" class="btn btn-ghost" id="cancel-status">Cancel</button>
++        <button type="submit" class="btn btn-primary">Update status</button>
++      </div>
++    </form>`;
++  openModal(`Update status — ${escapeHtml(c.chqNo)}`, body, {
++    onMount: () => {
++      const form = document.getElementById('form-status');
++      const select = document.getElementById('status-select');
++      select.value = c.status;
++      const toggleFields = () => {
++        document.getElementById('clearance-field').style.display = select.value === 'CLEARED' ? '' : 'none';
++        const isReturned = select.value === 'RETURNED';
++        document.getElementById('return-reason-field').style.display = isReturned ? '' : 'none';
++        document.getElementById('return-note-field').style.display = isReturned ? '' : 'none';
++      };
++      select.addEventListener('change', toggleFields);
++      toggleFields();
++      document.getElementById('cancel-status').addEventListener('click', closeModal);
++      form.addEventListener('submit', async (e) => {
++        e.preventDefault();
++        clearFormError(form);
++        const data = Object.fromEntries(new FormData(form).entries());
++        try {
++          await api(`/issued-cheques/${c.id}/status`, { method: 'PATCH', body: JSON.stringify(data) });
++          toast('Status updated', 'success');
++          closeModal();
++          openIssuedDetail(c.id);
++          loadIssued();
++          loadDashboard();
++        } catch (err) {
++          formError(form, err.message);
++        }
++      });
++    },
++  });
++}
++
++function openIssuedFollowUpModal(c) {
++  const body = `
++    <form id="form-followup">
++      <div class="form-error"></div>
++      <div class="form-grid">
++        <div class="field span-2">
++          <label>Response *</label>
++          <select name="response" required>${enumOptions(ISSUED_FOLLOWUP_RESPONSES)}</select>
++        </div>
++        <div class="field">
++          <label>Follow-up date</label>
++          <input name="followUpDate" type="date" value="${fmtDateInput(new Date())}">
++        </div>
++        <div class="field">
++          <label>Next action date</label>
++          <input name="nextActionDate" type="date">
++        </div>
++        <div class="field span-2">
++          <label>Staff</label>
++          <select name="staffId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
++        </div>
++        <div class="field span-2">
++          <label>Note</label>
++          <textarea name="note"></textarea>
++        </div>
++      </div>
++      <div class="form-actions">
++        <button type="button" class="btn btn-ghost" id="cancel-followup">Cancel</button>
++        <button type="submit" class="btn btn-primary">Log follow-up</button>
++      </div>
++    </form>`;
++  openModal(`Log follow-up — ${escapeHtml(c.chqNo)}`, body, {
++    onMount: () => {
++      const form = document.getElementById('form-followup');
++      document.getElementById('cancel-followup').addEventListener('click', closeModal);
++      form.addEventListener('submit', async (e) => {
++        e.preventDefault();
++        clearFormError(form);
++        const data = Object.fromEntries(new FormData(form).entries());
++        try {
++          await api(`/issued-cheques/${c.id}/followups`, { method: 'POST', body: JSON.stringify(data) });
++          toast('Follow-up logged', 'success');
++          closeModal();
++          openIssuedDetail(c.id);
++          loadIssued();
++        } catch (err) {
++          formError(form, err.message);
++        }
++      });
++    },
++  });
++}
++
++function openIssuedPaymentModal(c) {
++  const alreadyPaid = c.payments.reduce((s, p) => s + Number(p.amount), 0);
++  const remaining = Number(c.amount) - alreadyPaid;
++  const body = `
++    <form id="form-payment">
++      <div class="form-error"></div>
++      <p class="hint">Remaining balance: Rs ${fmtMoney(remaining)}</p>
++      <div class="form-grid">
++        <div class="field">
++          <label>Amount *</label>
++          <input name="amount" type="number" step="0.01" min="0.01" max="${remaining}" required>
++        </div>
++        <div class="field">
++          <label>Method *</label>
++          <select name="method" required>${enumOptions(PAYMENT_METHODS)}</select>
++        </div>
++        <div class="field">
++          <label>Payment date</label>
++          <input name="paymentDate" type="date" value="${fmtDateInput(new Date())}">
++        </div>
++        <div class="field">
++          <label>Reference no</label>
++          <input name="referenceNo" type="text">
++        </div>
++        <div class="field span-2">
++          <label>Staff</label>
++          <select name="staffId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
++        </div>
++        <div class="field span-2">
++          <label>Note</label>
++          <textarea name="note"></textarea>
++        </div>
++      </div>
++      <div class="form-actions">
++        <button type="button" class="btn btn-ghost" id="cancel-payment">Cancel</button>
++        <button type="submit" class="btn btn-primary">Record settlement</button>
++      </div>
++    </form>`;
++  openModal(`Record settlement — ${escapeHtml(c.chqNo)}`, body, {
++    onMount: () => {
++      const form = document.getElementById('form-payment');
++      document.getElementById('cancel-payment').addEventListener('click', closeModal);
++      form.addEventListener('submit', async (e) => {
++        e.preventDefault();
++        clearFormError(form);
++        const data = Object.fromEntries(new FormData(form).entries());
++        try {
++          await api(`/issued-cheques/${c.id}/payments`, { method: 'POST', body: JSON.stringify(data) });
++          toast('Settlement recorded', 'success');
++          closeModal();
++          openIssuedDetail(c.id);
++          loadIssued();
++          loadDashboard();
++        } catch (err) {
++          formError(form, err.message);
++        }
++      });
++    },
++  });
++}
++
++function openIssuedCheckLogModal(c) {
++  const body = `
++    <form id="form-checklog">
++      <div class="form-error"></div>
++      <div class="form-grid">
++        <div class="field span-2">
++          <label>Reason *</label>
++          <textarea name="reason" required placeholder="e.g. cheque stub vs bank statement mismatch"></textarea>
++        </div>
++        <div class="field span-2">
++          <label>Raised by</label>
++          <select name="raisedById">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
++        </div>
++      </div>
++      <div class="form-actions">
++        <button type="button" class="btn btn-ghost" id="cancel-checklog">Cancel</button>
++        <button type="submit" class="btn btn-primary">Flag for check</button>
++      </div>
++    </form>`;
++  openModal(`Flag for manual check — ${escapeHtml(c.chqNo)}`, body, {
++    onMount: () => {
++      const form = document.getElementById('form-checklog');
++      document.getElementById('cancel-checklog').addEventListener('click', closeModal);
++      form.addEventListener('submit', async (e) => {
++        e.preventDefault();
++        clearFormError(form);
++        const data = Object.fromEntries(new FormData(form).entries());
++        try {
++          await api(`/issued-cheques/${c.id}/checklogs`, { method: 'POST', body: JSON.stringify(data) });
++          toast('Cheque flagged for check', 'success');
++          closeModal();
++          openIssuedDetail(c.id);
++          loadIssued();
++          loadDashboard();
++        } catch (err) {
++          formError(form, err.message);
++        }
++      });
++    },
++  });
++}
++
++function openIssuedResolveCheckLogModal(c, logId) {
++  const body = `
++    <form id="form-resolve">
++      <div class="form-error"></div>
++      <div class="form-grid">
++        <div class="field span-2">
++          <label>Actual status *</label>
++          <select name="resolvedStatus" required>${enumOptions(ISSUED_STATUSES.filter((s) => s !== 'ON_CHECK'))}</select>
++        </div>
++        <div class="field span-2">
++          <label>Resolution note</label>
++          <textarea name="resolutionNote" placeholder="What did you find out?"></textarea>
++        </div>
++      </div>
++      <div class="form-actions">
++        <button type="button" class="btn btn-ghost" id="cancel-resolve">Cancel</button>
++        <button type="submit" class="btn btn-primary">Resolve</button>
++      </div>
++    </form>`;
++  openModal(`Resolve check — ${escapeHtml(c.chqNo)}`, body, {
++    onMount: () => {
++      const form = document.getElementById('form-resolve');
++      document.getElementById('cancel-resolve').addEventListener('click', closeModal);
++      form.addEventListener('submit', async (e) => {
++        e.preventDefault();
++        clearFormError(form);
++        const data = Object.fromEntries(new FormData(form).entries());
++        try {
++          await api(`/issued-cheques/${c.id}/checklogs/${logId}/resolve`, { method: 'PATCH', body: JSON.stringify(data) });
++          toast('Check resolved', 'success');
++          closeModal();
++          openIssuedDetail(c.id);
++          loadIssued();
++          loadDashboard();
++        } catch (err) {
++          formError(form, err.message);
++        }
++      });
++    },
++  });
++}
++
++function openIssuedReplaceModal(c) {
++  const body = `
++    <form id="form-replace">
++      <div class="form-error"></div>
++      <p class="hint">Same payee carries over automatically.</p>
++      <div class="form-grid">
++        <div class="field">
++          <label>New cheque no *</label>
++          <input name="chqNo" type="text" required>
++        </div>
++        <div class="field">
++          <label>New cheque date *</label>
++          <input name="chqDate" type="date" required>
++        </div>
++        <div class="field">
++          <label>Amount</label>
++          <input name="amount" type="number" step="0.01" min="0.01" value="${c.amount}">
++        </div>
++        <div class="field">
++          <label>Our account</label>
++          <select name="companyBankAccountId">${selectOptions(state.accounts, 'id', (a) => a.accountName, 'Same as original')}</select>
++        </div>
++      </div>
++      <div class="form-actions">
++        <button type="button" class="btn btn-ghost" id="cancel-replace">Cancel</button>
++        <button type="submit" class="btn btn-primary">Create replacement</button>
++      </div>
++    </form>`;
++  openModal(`Issue replacement — for ${escapeHtml(c.chqNo)}`, body, {
++    onMount: () => {
++      const form = document.getElementById('form-replace');
++      document.getElementById('cancel-replace').addEventListener('click', closeModal);
++      form.addEventListener('submit', async (e) => {
++        e.preventDefault();
++        clearFormError(form);
++        const data = Object.fromEntries(new FormData(form).entries());
++        if (!data.companyBankAccountId) delete data.companyBankAccountId;
++        try {
++          const replacement = await api(`/issued-cheques/${c.id}/replace`, { method: 'POST', body: JSON.stringify(data) });
++          toast('Replacement cheque created', 'success');
++          closeModal();
++          openIssuedDetail(replacement.id);
++          loadIssued();
++        } catch (err) {
++          formError(form, err.message);
++        }
++      });
++    },
++  });
++}
+--- cheque-tracker/public/style.css
++++ cheque-tracker/public/style.css
+@@ -1,680 +1,695 @@
+-/* ==========================================================================
+-   Tokens
+-   ========================================================================== */
+-:root {
+-  --paper:        #E8E4D8;
+-  --surface:      #FBFAF5;
+-  --surface-raise:#FFFFFF;
+-  --ink:          #1E2A32;
+-  --ink-soft:     #55636C;
+-  --ink-faint:    #8B958E;
+-  --line:         #C9C1AC;
+-  --line-soft:    #DBD5C4;
+-
+-  --brand:        #2B5F73;
+-  --brand-dark:   #1D4553;
+-  --brand-tint:   #E3ECEE;
+-
+-  --status-pending:   #A9822F;
+-  --status-followup:  #3B5E8C;
+-  --status-oncheck:   #7C5B66;
+-  --status-presented: #4C7A8C;
+-  --status-cleared:   #2E7D4F;
+-  --status-returned:  #A23B2E;
+-  --status-stopped:   #6B6558;
+-
+-  --danger:  #A23B2E;
+-  --danger-tint: #F3E4E1;
+-
+-  --radius: 3px;
+-  --font-display: 'Spectral', Georgia, serif;
+-  --font-body: 'IBM Plex Sans', -apple-system, sans-serif;
+-  --font-mono: 'IBM Plex Mono', 'SFMono-Regular', monospace;
+-
+-  --shadow-drawer: -8px 0 24px rgba(30, 42, 50, 0.14);
+-  --shadow-modal: 0 12px 32px rgba(30, 42, 50, 0.24);
+-}
+-
+-* { box-sizing: border-box; }
+-
+-html, body {
+-  margin: 0;
+-  padding: 0;
+-  background: var(--paper);
+-  color: var(--ink);
+-  font-family: var(--font-body);
+-  font-size: 14.5px;
+-  line-height: 1.5;
+-}
+-
+-h1, h2, h3 { font-family: var(--font-display); font-weight: 600; margin: 0; color: var(--ink); }
+-h2 { font-size: 1.5rem; font-weight: 500; }
+-h3 { font-size: 1.05rem; font-weight: 600; margin-bottom: 0.75rem; }
+-
+-button { font-family: var(--font-body); }
+-
+-.hint { color: var(--ink-soft); font-size: 0.88rem; margin: 0.25rem 0 1rem; }
+-
+-/* Native <input type="date"> stays in the DOM as the real form control (so
+-   FormData submission and HTML5 "required" validation keep working) but is
+-   visually replaced by the BS picker in .bs-date-field right after it. This
+-   is the standard "visually hidden but still focusable" pattern — not
+-   display:none / visibility:hidden, which would remove it from constraint
+-   validation entirely. */
+-.bs-native-date {
+-  position: absolute;
+-  width: 1px;
+-  height: 1px;
+-  padding: 0;
+-  margin: -1px;
+-  overflow: hidden;
+-  clip: rect(0, 0, 0, 0);
+-  white-space: nowrap;
+-  border: 0;
+-}
+-.field { position: relative; }
+-
+-.bs-date-field { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; }
+-.bs-date-select { min-width: 0; flex: 1 1 auto; }
+-.bs-date-select.bs-date-year { flex-basis: 5.5rem; }
+-.bs-date-select.bs-date-month { flex-basis: 7rem; }
+-.bs-date-select.bs-date-day { flex-basis: 4rem; }
+-.bs-date-today { flex: 0 0 auto; }
+-.bs-date-hint { flex: 1 1 100%; color: var(--ink-soft); font-size: 0.78rem; white-space: nowrap; }
+-
+-/* ==========================================================================
+-   Editable dropdowns — combobox.js
+-   ========================================================================== */
+-/* Same "visually hidden but still focusable" trick as .bs-native-date: the
+-   real <select> stays in the DOM (name attribute + required validation both
+-   keep working) but is replaced on screen by the text input + list below. */
+-.combo-native {
+-  position: absolute;
+-  width: 1px;
+-  height: 1px;
+-  padding: 0;
+-  margin: -1px;
+-  overflow: hidden;
+-  clip: rect(0, 0, 0, 0);
+-  white-space: nowrap;
+-  border: 0;
+-}
+-.combo-field { position: relative; }
+-.combo-list {
+-  position: absolute;
+-  z-index: 20;
+-  top: calc(100% + 3px);
+-  left: 0;
+-  right: 0;
+-  margin: 0;
+-  padding: 0.25rem 0;
+-  list-style: none;
+-  max-height: 220px;
+-  overflow-y: auto;
+-  background: var(--surface-raise);
+-  border: 1px solid var(--line);
+-  border-radius: var(--radius);
+-  box-shadow: var(--shadow-modal);
+-}
+-.combo-option {
+-  padding: 0.42rem 0.65rem;
+-  font-size: 0.86rem;
+-  cursor: pointer;
+-  white-space: nowrap;
+-  overflow: hidden;
+-  text-overflow: ellipsis;
+-}
+-.combo-option.active,
+-.combo-option:hover { background: var(--brand-tint); }
+-.combo-create {
+-  color: var(--brand-dark);
+-  font-style: italic;
+-  border-top: 1px solid var(--line-soft);
+-  white-space: normal;
+-}
+-
+-/* ==========================================================================
+-   Autocomplete — inline ghost-text suggestions (autocomplete.js)
+-   ========================================================================== */
+-/* The real field sits on top (background: transparent, set inline by
+-   autocomplete.js) of this box, which supplies the fill/border look and, in
+-   the untyped region past the cursor, the greyed-out suggestion text. The
+-   .ac-ghost-typed span exists purely to push .ac-ghost-suggest into the
+-   right horizontal position — it mirrors what's been typed so far but stays
+-   invisible, since the real field already renders that part itself. */
+-.ac-wrap { position: relative; display: inline-block; vertical-align: top; max-width: 100%; }
+-.ac-ghost {
+-  position: absolute;
+-  inset: 0;
+-  z-index: 0;
+-  display: flex;
+-  align-items: center;
+-  overflow: hidden;
+-  pointer-events: none;
+-  border: 1px solid transparent;
+-  background: var(--surface-raise);
+-  white-space: pre;
+-}
+-.ac-ghost-multiline { align-items: flex-start; white-space: pre-wrap; overflow-wrap: anywhere; }
+-.ac-ghost-typed { color: transparent; }
+-.ac-ghost-suggest { color: var(--ink-faint); }
+-.ac-wrap input, .ac-wrap textarea { position: relative; z-index: 1; }
+-
+-.ac-date-suggest {
+-  flex: 0 0 auto;
+-  border: none;
+-  background: none;
+-  padding: 0;
+-  font-family: var(--font-body);
+-  font-size: 0.78rem;
+-  color: var(--ink-faint);
+-  text-decoration: underline;
+-  text-underline-offset: 2px;
+-  cursor: pointer;
+-}
+-.ac-date-suggest:hover, .ac-date-suggest:focus-visible { color: var(--brand); }
+-.ac-date-suggest[hidden] { display: none; }
+-
+-/* ==========================================================================
+-   Masthead
+-   ========================================================================== */
+-.masthead {
+-  display: flex;
+-  align-items: center;
+-  gap: 2rem;
+-  padding: 1.4rem 2rem;
+-  border-bottom: 2px solid var(--ink);
+-  background: var(--surface);
+-}
+-.masthead-title h1 { font-size: 1.65rem; letter-spacing: 0.01em; }
+-.masthead-title p { margin: 0.15rem 0 0; color: var(--ink-soft); font-size: 0.85rem; font-style: italic; }
+-
+-.masthead-stats { display: flex; gap: 1.75rem; margin-left: auto; }
+-.company-switcher { margin-left: 1.5rem; }
+-.company-switcher select#company-select {
+-  font-family: inherit;
+-  font-size: 0.85rem;
+-  padding: 0.3rem 0.5rem;
+-  border-radius: 6px;
+-  border: 1px solid var(--line);
+-  background: var(--surface-raise);
+-  color: var(--ink);
+-  max-width: 220px;
+-}
+-.stat { display: flex; flex-direction: column; }
+-.stat-label { font-size: 0.72rem; color: var(--ink-soft); }
+-.stat-value { font-family: var(--font-mono); font-size: 1.15rem; font-weight: 500; font-variant-numeric: tabular-nums; }
+-.stat-warn .stat-value { color: var(--status-oncheck); }
+-
+-.masthead-status {
+-  color: var(--ink-faint);
+-  font-size: 0.7rem;
+-}
+-.masthead-status.ok { color: var(--status-cleared); }
+-.masthead-status.error { color: var(--status-returned); }
+-
+-/* ==========================================================================
+-   Tabs — styled as ledger index dividers
+-   ========================================================================== */
+-.tabs {
+-  display: flex;
+-  gap: 0.15rem;
+-  padding: 0 1.5rem;
+-  background: var(--paper);
+-  border-bottom: 1px solid var(--line);
+-  overflow-x: auto;
+-}
+-.tab {
+-  appearance: none;
+-  border: 1px solid var(--line);
+-  border-bottom: none;
+-  background: var(--line-soft);
+-  color: var(--ink-soft);
+-  font-size: 0.86rem;
+-  padding: 0.6rem 1.1rem 0.55rem;
+-  border-radius: var(--radius) var(--radius) 0 0;
+-  cursor: pointer;
+-  position: relative;
+-  top: 1px;
+-  white-space: nowrap;
+-}
+-.tab:hover { color: var(--ink); }
+-.tab.active {
+-  background: var(--surface);
+-  color: var(--ink);
+-  font-weight: 600;
+-  border-color: var(--line);
+-  border-bottom: 1px solid var(--surface);
+-}
+-
+-main { padding: 1.75rem 2rem 4rem; max-width: 1280px; margin: 0 auto; }
+-
+-.panel { display: none; }
+-.panel.active { display: block; }
+-
+-.panel-head {
+-  display: flex;
+-  align-items: baseline;
+-  justify-content: space-between;
+-  margin-bottom: 1rem;
+-}
+-
+-/* ==========================================================================
+-   Buttons
+-   ========================================================================== */
+-.btn {
+-  appearance: none;
+-  border: 1px solid var(--line);
+-  background: var(--surface-raise);
+-  color: var(--ink);
+-  padding: 0.5rem 0.95rem;
+-  border-radius: var(--radius);
+-  font-size: 0.85rem;
+-  cursor: pointer;
+-  transition: border-color 0.15s ease, background 0.15s ease;
+-}
+-.btn:hover { border-color: var(--ink-soft); }
+-.btn-primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+-.btn-primary:hover { background: var(--brand-dark); border-color: var(--brand-dark); }
+-.btn-danger { background: var(--surface-raise); border-color: var(--danger); color: var(--danger); }
+-.btn-danger:hover { background: var(--danger-tint); }
+-.btn-ghost { border-color: transparent; background: transparent; }
+-.btn-ghost:hover { background: var(--line-soft); }
+-.btn-sm { padding: 0.3rem 0.65rem; font-size: 0.78rem; }
+-.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+-
+-/* ==========================================================================
+-   Toolbar
+-   ========================================================================== */
+-.toolbar {
+-  display: flex;
+-  gap: 0.6rem;
+-  margin-bottom: 1rem;
+-}
+-.toolbar input[type="search"],
+-.toolbar select {
+-  font-family: var(--font-body);
+-  font-size: 0.85rem;
+-  padding: 0.5rem 0.7rem;
+-  border: 1px solid var(--line);
+-  border-radius: var(--radius);
+-  background: var(--surface-raise);
+-  color: var(--ink);
+-}
+-.toolbar input[type="search"] { flex: 1; max-width: 320px; }
+-.checkbox-field {
+-  display: flex;
+-  align-items: center;
+-  gap: 0.4rem;
+-  font-size: 0.85rem;
+-  color: var(--ink-soft);
+-  cursor: pointer;
+-  white-space: nowrap;
+-}
+-.checkbox-field input { cursor: pointer; }
+-
+-/* ==========================================================================
+-   Tables — open-ledger look: horizontal rules only
+-   ========================================================================== */
+-table.ledger {
+-  width: 100%;
+-  border-collapse: collapse;
+-  background: var(--surface);
+-  border-top: 1px solid var(--ink);
+-  border-bottom: 1px solid var(--ink);
+-}
+-table.ledger th {
+-  text-align: left;
+-  font-family: var(--font-body);
+-  font-weight: 600;
+-  font-size: 0.74rem;
+-  color: var(--ink-soft);
+-  padding: 0.55rem 0.8rem;
+-  border-bottom: 1px solid var(--line);
+-  white-space: nowrap;
+-}
+-table.ledger td {
+-  padding: 0.6rem 0.8rem;
+-  border-bottom: 1px solid var(--line-soft);
+-  vertical-align: middle;
+-}
+-table.ledger tbody tr:hover { background: var(--brand-tint); cursor: pointer; }
+-table.ledger tbody tr:last-child td { border-bottom: none; }
+-
+-.pagination {
+-  display: flex;
+-  align-items: center;
+-  justify-content: space-between;
+-  gap: 1rem;
+-  padding: 0.75rem 0.25rem;
+-  font-size: 0.85rem;
+-  color: var(--ink-soft);
+-}
+-.pagination-nav { display: flex; align-items: center; gap: 0.6rem; }
+-.pagination-page { font-variant-numeric: tabular-nums; }
+-.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+-.date-stack { display: flex; flex-direction: column; line-height: 1.35; }
+-.date-stack .date-bs { font-weight: 500; }
+-.date-stack .date-ad { font-size: 0.78rem; }
+-.age-stale { color: var(--danger); font-weight: 600; }
+-.cell-truncate {
+-  max-width: 220px;
+-  white-space: nowrap;
+-  overflow: hidden;
+-  text-overflow: ellipsis;
+-  color: var(--ink-soft);
+-}
+-.amount { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; display: block; }
+-.empty-row td { text-align: center; color: var(--ink-faint); padding: 2.5rem 1rem; font-style: italic; }
+-.muted { color: var(--ink-faint); }
+-.row-deleted { opacity: 0.55; }
+-.row-deleted td { font-style: italic; }
+-.db-input {
+-  width: 110px;
+-  font-family: var(--font-mono);
+-  font-variant-numeric: tabular-nums;
+-  text-align: right;
+-  padding: 0.3rem 0.4rem;
+-  border: 1px solid var(--line);
+-  border-radius: var(--radius);
+-  background: var(--surface-raise);
+-  color: var(--ink);
+-}
+-.db-input:focus { outline: none; border-color: var(--brand); }
+-.db-input::placeholder { color: var(--ink-faint); font-family: var(--font-body); font-style: italic; }
+-.db-negative { color: var(--danger); font-weight: 600; }
+-.db-total-row td { font-weight: 600; border-top: 1px solid var(--ink); background: var(--brand-tint); }
+-table.ledger tbody tr:has(.db-input):hover { background: none; cursor: default; }
+-.tag-deleted {
+-  display: inline-block;
+-  font-size: 0.7rem;
+-  font-weight: 600;
+-  color: var(--danger);
+-  background: var(--danger-tint);
+-  border-radius: var(--radius);
+-  padding: 0.1rem 0.4rem;
+-  margin-left: 0.4rem;
+-}
+-td.row-actions {
+-  text-align: right;
+-  white-space: nowrap;
+-  cursor: default;
+-}
+-.row-actions-group { display: inline-flex; align-items: center; gap: 0.4rem; position: relative; }
+-
+-/* Status tag */
+-.status-tag {
+-  display: inline-flex;
+-  align-items: center;
+-  gap: 0.4rem;
+-  font-size: 0.8rem;
+-  font-weight: 500;
+-}
+-.status-tag::before {
+-  content: '';
+-  width: 7px;
+-  height: 7px;
+-  border-radius: 50%;
+-  background: currentColor;
+-  flex-shrink: 0;
+-}
+-.status-PENDING   { color: var(--status-pending); }
+-.status-FOLLOWUP  { color: var(--status-followup); }
+-.status-ON_CHECK  { color: var(--status-oncheck); }
+-.status-PRESENTED { color: var(--status-presented); }
+-.status-CLEARED   { color: var(--status-cleared); }
+-.status-RETURNED  { color: var(--status-returned); }
+-.status-STOPPED   { color: var(--status-stopped); }
+-.status-ISSUED    { color: var(--status-pending); }
+-
+-/* ==========================================================================
+-   Dashboard
+-   ========================================================================== */
+-.dash-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-bottom: 2.25rem; }
+-.status-breakdown { display: flex; flex-direction: column; gap: 0.5rem; }
+-.status-row {
+-  display: flex;
+-  align-items: center;
+-  gap: 0.75rem;
+-  padding: 0.55rem 0.8rem;
+-  background: var(--surface);
+-  border: 1px solid var(--line-soft);
+-  border-radius: var(--radius);
+-}
+-.status-row .status-tag { min-width: 110px; }
+-.status-row .bar-track { flex: 1; height: 5px; background: var(--line-soft); border-radius: 3px; overflow: hidden; }
+-.status-row .bar-fill { height: 100%; background: currentColor; }
+-.status-row .status-count { font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-soft); min-width: 40px; text-align: right; }
+-.status-row .status-amount { font-family: var(--font-mono); font-size: 0.8rem; min-width: 110px; text-align: right; }
+-
+-/* ==========================================================================
+-   Drawer (cheque detail)
+-   ========================================================================== */
+-.drawer-backdrop, .modal-backdrop {
+-  display: none;
+-  position: fixed;
+-  inset: 0;
+-  background: rgba(30, 42, 50, 0.35);
+-  z-index: 40;
+-}
+-.drawer-backdrop.open, .modal-backdrop.open { display: block; }
+-
+-.drawer {
+-  position: fixed;
+-  top: 0; right: -560px;
+-  width: 560px;
+-  max-width: 92vw;
+-  height: 100vh;
+-  background: var(--surface);
+-  box-shadow: var(--shadow-drawer);
+-  z-index: 50;
+-  overflow-y: auto;
+-  transition: right 0.25s ease;
+-}
+-.drawer.open { right: 0; }
+-#drawer-content { padding: 1.75rem; }
+-
+-.drawer-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.25rem; }
+-.drawer-header h2 { font-size: 1.3rem; }
+-.drawer-close { border: none; background: none; font-size: 1.4rem; cursor: pointer; color: var(--ink-soft); line-height: 1; }
+-.drawer-close:hover { color: var(--ink); }
+-
+-.detail-grid {
+-  display: grid;
+-  grid-template-columns: 1fr 1fr;
+-  gap: 0.15rem 1.5rem;
+-  margin: 1.25rem 0;
+-  padding: 1rem;
+-  background: var(--surface-raise);
+-  border: 1px solid var(--line-soft);
+-  border-radius: var(--radius);
+-}
+-.detail-field { padding: 0.35rem 0; border-bottom: 1px dotted var(--line-soft); display: flex; justify-content: space-between; gap: 1rem; }
+-.detail-field dt { color: var(--ink-soft); font-size: 0.78rem; }
+-.detail-field dd { margin: 0; font-family: var(--font-mono); font-size: 0.85rem; text-align: right; }
+-
+-.section-title {
+-  font-family: var(--font-display);
+-  font-size: 0.95rem;
+-  font-weight: 600;
+-  margin: 1.5rem 0 0.6rem;
+-  padding-bottom: 0.35rem;
+-  border-bottom: 1px solid var(--line);
+-}
+-
+-.action-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
+-
+-.timeline { display: flex; flex-direction: column; gap: 0.6rem; }
+-.timeline-item {
+-  padding: 0.6rem 0.75rem;
+-  background: var(--surface-raise);
+-  border: 1px solid var(--line-soft);
+-  border-left: 3px solid var(--brand);
+-  border-radius: 0 var(--radius) var(--radius) 0;
+-  font-size: 0.83rem;
+-}
+-.timeline-item.payment { border-left-color: var(--status-cleared); }
+-.timeline-item.checklog { border-left-color: var(--status-oncheck); }
+-.timeline-item .ti-head { display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 0.2rem; }
+-.timeline-item .ti-meta { color: var(--ink-soft); font-size: 0.76rem; }
+-.timeline-empty { color: var(--ink-faint); font-style: italic; font-size: 0.85rem; }
+-
+-/* ==========================================================================
+-   Modal (forms)
+-   ========================================================================== */
+-.modal {
+-  display: none;
+-  position: fixed;
+-  inset: 0;
+-  z-index: 60;
+-  align-items: flex-start;
+-  justify-content: center;
+-  overflow-y: auto;
+-  padding: 4vh 1rem;
+-}
+-.modal.open { display: flex; }
+-#modal-content {
+-  background: var(--surface);
+-  border-radius: var(--radius);
+-  box-shadow: var(--shadow-modal);
+-  width: 100%;
+-  max-width: 730px;
+-  padding: 1.75rem;
+-
+-}
+-.modal-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.1rem; }
+-.modal-header h2 { font-size: 1.2rem; }
+-.modal-close { border: none; background: none; font-size: 1.3rem; cursor: pointer; color: var(--ink-soft); }
+-
+-.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.9rem; }
+-.form-grid .span-2 { grid-column: span 2; }
+-.field { display: flex; flex-direction: column; gap: 0.3rem; }
+-.field label { font-size: 0.78rem; color: var(--ink-soft); }
+-.field input, .field select, .field textarea {
+-  font-family: var(--font-body);
+-  font-size: 0.88rem;
+-  padding: 0.5rem 0.6rem;
+-  border: 1px solid var(--line);
+-  border-radius: var(--radius);
+-  background: var(--surface-raise);
+-  color: var(--ink);
+-}
+-.field input:focus, .field select:focus, .field textarea:focus,
+-.toolbar input:focus, .toolbar select:focus {
+-  outline: 2px solid var(--brand);
+-  outline-offset: 1px;
+-}
+-.field textarea { resize: vertical; min-height: 60px; }
+-
+-.form-actions { display: flex; justify-content: flex-end; gap: 0.6rem; margin-top: 1.4rem; }
+-.form-error {
+-  background: var(--danger-tint);
+-  color: var(--danger);
+-  border-radius: var(--radius);
+-  padding: 0.55rem 0.75rem;
+-  font-size: 0.82rem;
+-  margin-bottom: 0.9rem;
+-  display: none;
+-}
+-.form-error.show { display: block; }
+-
+-/* ==========================================================================
+-   Toasts
+-   ========================================================================== */
+-.toast-root {
+-  position: fixed;
+-  bottom: 1.5rem;
+-  right: 1.5rem;
+-  display: flex;
+-  flex-direction: column;
+-  gap: 0.5rem;
+-  z-index: 80;
+-}
+-.toast {
+-  background: var(--ink);
+-  color: var(--surface);
+-  padding: 0.7rem 1rem;
+-  border-radius: var(--radius);
+-  font-size: 0.85rem;
+-  box-shadow: 0 6px 16px rgba(0,0,0,0.2);
+-  animation: toast-in 0.2s ease;
+-}
+-.toast.error { background: var(--danger); }
+-.toast.success { background: var(--status-cleared); }
+-@keyframes toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+-
+-/* ==========================================================================
+-   Import / Export
+-   ========================================================================== */
+-.ie-grid {
+-  display: grid;
+-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+-  gap: 1.25rem;
+-}
+-.ie-card {
+-  background: var(--surface);
+-  border: 1px solid var(--line-soft);
+-  border-radius: var(--radius);
+-  padding: 1.1rem 1.2rem 1.25rem;
+-  display: flex;
+-  flex-direction: column;
+-}
+-.ie-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
+-.ie-card-head h3 { margin-bottom: 0; }
+-.ie-columns { font-family: var(--font-mono); font-size: 0.72rem; color: var(--ink-faint); margin: 0.2rem 0 0.9rem; word-break: break-word; }
+-.ie-actions { display: flex; gap: 0.5rem; margin-bottom: 1.1rem; }
+-.ie-import-form { border-top: 1px dotted var(--line-soft); padding-top: 0.9rem; }
+-.ie-import-label { font-size: 0.78rem; color: var(--ink-soft); display: block; margin-bottom: 0.4rem; }
+-.ie-import-row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+-.ie-import-row input[type="file"] {
+-  flex: 1;
+-  min-width: 150px;
+-  font-size: 0.78rem;
+-  font-family: var(--font-body);
+-  color: var(--ink-soft);
+-}
+-.ie-import-row select {
+-  font-size: 0.82rem;
+-  padding: 0.45rem 0.5rem;
+-  border: 1px solid var(--line);
+-  border-radius: var(--radius);
+-  background: var(--surface-raise);
+-  color: var(--ink);
+-}
+-.ie-replace-warning {
+-  color: var(--danger);
+-  font-size: 0.78rem;
+-  margin: 0.5rem 0 0;
+-  display: none;
+-}
+-.ie-replace-warning.show { display: block; }
+-.ie-result { margin-top: 0.7rem; }
+-.ie-result .hint { margin: 0; }
+-.ie-error-list {
+-  margin: 0.5rem 0 0;
+-  padding-left: 1.1rem;
+-  font-size: 0.78rem;
+-  color: var(--danger);
+-  max-height: 150px;
+-  overflow-y: auto;
+-}
+-.ie-error-list li { margin-bottom: 0.2rem; }
+-
+-/* ==========================================================================
+-   Responsive
+-   ========================================================================== */
+-@media (max-width: 860px) {
+-  .masthead { flex-wrap: wrap; gap: 1rem; }
+-  .masthead-stats { margin-left: 0; gap: 1.2rem; }
+-  main { padding: 1.25rem 1rem 3rem; }
+-  .dash-grid { grid-template-columns: 1fr; }
+-  .form-grid { grid-template-columns: 1fr; }
+-  .form-grid .span-2 { grid-column: span 1; }
+-  .drawer { width: 100vw; right: -100vw; }
+-  table.ledger { font-size: 0.82rem; }
+-  .ie-grid { grid-template-columns: 1fr; }
+-}
+-
+-@media (prefers-reduced-motion: reduce) {
+-  .drawer, .toast { transition: none; animation: none; }
+-}
++/* ==========================================================================
++   Tokens
++   ========================================================================== */
++:root {
++  --paper:        #E8E4D8;
++  --surface:      #FBFAF5;
++  --surface-raise:#FFFFFF;
++  --ink:          #1E2A32;
++  --ink-soft:     #55636C;
++  --ink-faint:    #8B958E;
++  --line:         #C9C1AC;
++  --line-soft:    #DBD5C4;
++
++  --brand:        #2B5F73;
++  --brand-dark:   #1D4553;
++  --brand-tint:   #E3ECEE;
++
++  --status-pending:   #A9822F;
++  --status-followup:  #3B5E8C;
++  --status-oncheck:   #7C5B66;
++  --status-presented: #4C7A8C;
++  --status-cleared:   #2E7D4F;
++  --status-returned:  #A23B2E;
++  --status-stopped:   #6B6558;
++
++  --danger:  #A23B2E;
++  --danger-tint: #F3E4E1;
++
++  --radius: 3px;
++  --font-display: 'Spectral', Georgia, serif;
++  --font-body: 'IBM Plex Sans', -apple-system, sans-serif;
++  --font-mono: 'IBM Plex Mono', 'SFMono-Regular', monospace;
++
++  --shadow-drawer: -8px 0 24px rgba(30, 42, 50, 0.14);
++  --shadow-modal: 0 12px 32px rgba(30, 42, 50, 0.24);
++}
++
++* { box-sizing: border-box; }
++
++html, body {
++  margin: 0;
++  padding: 0;
++  background: var(--paper);
++  color: var(--ink);
++  font-family: var(--font-body);
++  font-size: 14.5px;
++  line-height: 1.5;
++}
++
++h1, h2, h3 { font-family: var(--font-display); font-weight: 600; margin: 0; color: var(--ink); }
++h2 { font-size: 1.5rem; font-weight: 500; }
++h3 { font-size: 1.05rem; font-weight: 600; margin-bottom: 0.75rem; }
++
++button { font-family: var(--font-body); }
++
++.hint { color: var(--ink-soft); font-size: 0.88rem; margin: 0.25rem 0 1rem; }
++
++/* Native <input type="date"> stays in the DOM as the real form control (so
++   FormData submission and HTML5 "required" validation keep working) but is
++   visually replaced by the BS picker in .bs-date-field right after it. This
++   is the standard "visually hidden but still focusable" pattern — not
++   display:none / visibility:hidden, which would remove it from constraint
++   validation entirely. */
++.bs-native-date {
++  position: absolute;
++  width: 1px;
++  height: 1px;
++  padding: 0;
++  margin: -1px;
++  overflow: hidden;
++  clip: rect(0, 0, 0, 0);
++  white-space: nowrap;
++  border: 0;
++}
++.field { position: relative; }
++
++.bs-date-field { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; }
++.bs-date-select { min-width: 0; flex: 1 1 auto; }
++.bs-date-select.bs-date-year { flex-basis: 5.5rem; }
++.bs-date-select.bs-date-month { flex-basis: 7rem; }
++.bs-date-select.bs-date-day { flex-basis: 4rem; }
++.bs-date-today { flex: 0 0 auto; }
++.bs-date-hint { flex: 1 1 100%; color: var(--ink-soft); font-size: 0.78rem; white-space: nowrap; }
++
++/* ==========================================================================
++   Editable dropdowns — combobox.js
++   ========================================================================== */
++/* Same "visually hidden but still focusable" trick as .bs-native-date: the
++   real <select> stays in the DOM (name attribute + required validation both
++   keep working) but is replaced on screen by the text input + list below. */
++.combo-native {
++  position: absolute;
++  width: 1px;
++  height: 1px;
++  padding: 0;
++  margin: -1px;
++  overflow: hidden;
++  clip: rect(0, 0, 0, 0);
++  white-space: nowrap;
++  border: 0;
++}
++.combo-field { position: relative; }
++.combo-list {
++  position: absolute;
++  z-index: 20;
++  top: calc(100% + 3px);
++  left: 0;
++  right: 0;
++  margin: 0;
++  padding: 0.25rem 0;
++  list-style: none;
++  max-height: 220px;
++  overflow-y: auto;
++  background: var(--surface-raise);
++  border: 1px solid var(--line);
++  border-radius: var(--radius);
++  box-shadow: var(--shadow-modal);
++}
++.combo-option {
++  padding: 0.42rem 0.65rem;
++  font-size: 0.86rem;
++  cursor: pointer;
++  white-space: nowrap;
++  overflow: hidden;
++  text-overflow: ellipsis;
++}
++.combo-option.active,
++.combo-option:hover { background: var(--brand-tint); }
++.combo-create {
++  color: var(--brand-dark);
++  font-style: italic;
++  border-top: 1px solid var(--line-soft);
++  white-space: normal;
++}
++
++/* ==========================================================================
++   Autocomplete — inline ghost-text suggestions (autocomplete.js)
++   ========================================================================== */
++/* The real field sits on top (background: transparent, set inline by
++   autocomplete.js) of this box, which supplies the fill/border look and, in
++   the untyped region past the cursor, the greyed-out suggestion text. The
++   .ac-ghost-typed span exists purely to push .ac-ghost-suggest into the
++   right horizontal position — it mirrors what's been typed so far but stays
++   invisible, since the real field already renders that part itself. */
++.ac-wrap { position: relative; display: inline-block; vertical-align: top; max-width: 100%; }
++.ac-ghost {
++  position: absolute;
++  inset: 0;
++  z-index: 0;
++  display: flex;
++  align-items: center;
++  overflow: hidden;
++  pointer-events: none;
++  border: 1px solid transparent;
++  background: var(--surface-raise);
++  white-space: pre;
++}
++.ac-ghost-multiline { align-items: flex-start; white-space: pre-wrap; overflow-wrap: anywhere; }
++.ac-ghost-typed { color: transparent; }
++.ac-ghost-suggest { color: var(--ink-faint); }
++.ac-wrap input, .ac-wrap textarea { position: relative; z-index: 1; }
++
++.ac-date-suggest {
++  flex: 0 0 auto;
++  border: none;
++  background: none;
++  padding: 0;
++  font-family: var(--font-body);
++  font-size: 0.78rem;
++  color: var(--ink-faint);
++  text-decoration: underline;
++  text-underline-offset: 2px;
++  cursor: pointer;
++}
++.ac-date-suggest:hover, .ac-date-suggest:focus-visible { color: var(--brand); }
++.ac-date-suggest[hidden] { display: none; }
++
++/* ==========================================================================
++   Masthead
++   ========================================================================== */
++.masthead {
++  display: flex;
++  align-items: center;
++  gap: 2rem;
++  padding: 1.4rem 2rem;
++  border-bottom: 2px solid var(--ink);
++  background: var(--surface);
++}
++.masthead-title h1 { font-size: 1.65rem; letter-spacing: 0.01em; }
++.masthead-title p { margin: 0.15rem 0 0; color: var(--ink-soft); font-size: 0.85rem; font-style: italic; }
++
++.masthead-stats { display: flex; gap: 1.75rem; margin-left: auto; }
++.company-switcher { margin-left: 1.5rem; }
++.company-switcher select#company-select {
++  font-family: inherit;
++  font-size: 0.85rem;
++  padding: 0.3rem 0.5rem;
++  border-radius: 6px;
++  border: 1px solid var(--line);
++  background: var(--surface-raise);
++  color: var(--ink);
++  max-width: 220px;
++}
++.stat { display: flex; flex-direction: column; }
++.stat-label { font-size: 0.72rem; color: var(--ink-soft); }
++.stat-value { font-family: var(--font-mono); font-size: 1.15rem; font-weight: 500; font-variant-numeric: tabular-nums; }
++.stat-warn .stat-value { color: var(--status-oncheck); }
++
++.masthead-status {
++  color: var(--ink-faint);
++  font-size: 0.7rem;
++}
++.masthead-status.ok { color: var(--status-cleared); }
++.masthead-status.error { color: var(--status-returned); }
++
++/* ==========================================================================
++   Tabs — styled as ledger index dividers
++   ========================================================================== */
++.tabs {
++  display: flex;
++  gap: 0.15rem;
++  padding: 0 1.5rem;
++  background: var(--paper);
++  border-bottom: 1px solid var(--line);
++  overflow-x: auto;
++}
++.tab {
++  appearance: none;
++  border: 1px solid var(--line);
++  border-bottom: none;
++  background: var(--line-soft);
++  color: var(--ink-soft);
++  font-size: 0.86rem;
++  padding: 0.6rem 1.1rem 0.55rem;
++  border-radius: var(--radius) var(--radius) 0 0;
++  cursor: pointer;
++  position: relative;
++  top: 1px;
++  white-space: nowrap;
++}
++.tab:hover { color: var(--ink); }
++.tab.active {
++  background: var(--surface);
++  color: var(--ink);
++  font-weight: 600;
++  border-color: var(--line);
++  border-bottom: 1px solid var(--surface);
++}
++
++main { padding: 1.75rem 2rem 4rem; max-width: 1280px; margin: 0 auto; }
++
++.panel { display: none; }
++.panel.active { display: block; }
++
++.panel-head {
++  display: flex;
++  align-items: baseline;
++  justify-content: space-between;
++  margin-bottom: 1rem;
++}
++
++/* ==========================================================================
++   Buttons
++   ========================================================================== */
++.btn {
++  appearance: none;
++  border: 1px solid var(--line);
++  background: var(--surface-raise);
++  color: var(--ink);
++  padding: 0.5rem 0.95rem;
++  border-radius: var(--radius);
++  font-size: 0.85rem;
++  cursor: pointer;
++  transition: border-color 0.15s ease, background 0.15s ease;
++}
++.btn:hover { border-color: var(--ink-soft); }
++.btn-primary { background: var(--brand); border-color: var(--brand); color: #fff; }
++.btn-primary:hover { background: var(--brand-dark); border-color: var(--brand-dark); }
++.btn-danger { background: var(--surface-raise); border-color: var(--danger); color: var(--danger); }
++.btn-danger:hover { background: var(--danger-tint); }
++.btn-ghost { border-color: transparent; background: transparent; }
++.btn-ghost:hover { background: var(--line-soft); }
++.btn-sm { padding: 0.3rem 0.65rem; font-size: 0.78rem; }
++.btn:disabled { opacity: 0.5; cursor: not-allowed; }
++
++/* ==========================================================================
++   Toolbar
++   ========================================================================== */
++.toolbar {
++  display: flex;
++  gap: 0.6rem;
++  margin-bottom: 1rem;
++}
++.toolbar input[type="search"],
++.toolbar select {
++  font-family: var(--font-body);
++  font-size: 0.85rem;
++  padding: 0.5rem 0.7rem;
++  border: 1px solid var(--line);
++  border-radius: var(--radius);
++  background: var(--surface-raise);
++  color: var(--ink);
++}
++.toolbar input[type="search"] { flex: 1; max-width: 320px; }
++.checkbox-field {
++  display: flex;
++  align-items: center;
++  gap: 0.4rem;
++  font-size: 0.85rem;
++  color: var(--ink-soft);
++  cursor: pointer;
++  white-space: nowrap;
++}
++.checkbox-field input { cursor: pointer; }
++
++/* ==========================================================================
++   Tables — open-ledger look: horizontal rules only
++   ========================================================================== */
++table.ledger {
++  width: 100%;
++  border-collapse: collapse;
++  background: var(--surface);
++  border-top: 1px solid var(--ink);
++  border-bottom: 1px solid var(--ink);
++}
++table.ledger th {
++  text-align: left;
++  font-family: var(--font-body);
++  font-weight: 600;
++  font-size: 0.74rem;
++  color: var(--ink-soft);
++  padding: 0.55rem 0.8rem;
++  border-bottom: 1px solid var(--line);
++  white-space: nowrap;
++}
++table.ledger td {
++  padding: 0.6rem 0.8rem;
++  border-bottom: 1px solid var(--line-soft);
++  vertical-align: middle;
++}
++table.ledger tbody tr:hover { background: var(--brand-tint); cursor: pointer; }
++table.ledger tbody tr:last-child td { border-bottom: none; }
++
++.pagination {
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: 1rem;
++  padding: 0.75rem 0.25rem;
++  font-size: 0.85rem;
++  color: var(--ink-soft);
++}
++.pagination-nav { display: flex; align-items: center; gap: 0.6rem; }
++.pagination-page { font-variant-numeric: tabular-nums; }
++.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
++.date-stack { display: flex; flex-direction: column; line-height: 1.35; }
++.date-stack .date-bs { font-weight: 500; }
++.date-stack .date-ad { font-size: 0.78rem; }
++.age-stale { color: var(--danger); font-weight: 600; }
++.cell-truncate {
++  max-width: 220px;
++  white-space: nowrap;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  color: var(--ink-soft);
++}
++.amount { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; display: block; }
++.empty-row td { text-align: center; color: var(--ink-faint); padding: 2.5rem 1rem; font-style: italic; }
++.muted { color: var(--ink-faint); }
++.row-deleted { opacity: 0.55; }
++.row-deleted td { font-style: italic; }
++.db-input {
++  width: 110px;
++  font-family: var(--font-mono);
++  font-variant-numeric: tabular-nums;
++  text-align: right;
++  padding: 0.3rem 0.4rem;
++  border: 1px solid var(--line);
++  border-radius: var(--radius);
++  background: var(--surface-raise);
++  color: var(--ink);
++}
++.db-input:focus { outline: none; border-color: var(--brand); }
++.db-input::placeholder { color: var(--ink-faint); font-family: var(--font-body); font-style: italic; }
++.db-negative { color: var(--danger); font-weight: 600; }
++.db-total-row td { font-weight: 600; border-top: 1px solid var(--ink); background: var(--brand-tint); }
++table.ledger tbody tr:has(.db-input):hover { background: none; cursor: default; }
++.tag-deleted {
++  display: inline-block;
++  font-size: 0.7rem;
++  font-weight: 600;
++  color: var(--danger);
++  background: var(--danger-tint);
++  border-radius: var(--radius);
++  padding: 0.1rem 0.4rem;
++  margin-left: 0.4rem;
++}
++td.row-actions {
++  text-align: right;
++  white-space: nowrap;
++  cursor: default;
++}
++.row-actions-group { display: inline-flex; align-items: center; gap: 0.4rem; position: relative; }
++
++/* Status tag */
++.status-tag {
++  display: inline-flex;
++  align-items: center;
++  gap: 0.4rem;
++  font-size: 0.8rem;
++  font-weight: 500;
++}
++.status-tag::before {
++  content: '';
++  width: 7px;
++  height: 7px;
++  border-radius: 50%;
++  background: currentColor;
++  flex-shrink: 0;
++}
++.status-PENDING   { color: var(--status-pending); }
++.status-FOLLOWUP  { color: var(--status-followup); }
++.status-ON_CHECK  { color: var(--status-oncheck); }
++.status-PRESENTED { color: var(--status-presented); }
++.status-CLEARED   { color: var(--status-cleared); }
++.status-RETURNED  { color: var(--status-returned); }
++.status-STOPPED   { color: var(--status-stopped); }
++.status-ISSUED    { color: var(--status-pending); }
++
++/* ==========================================================================
++   Dashboard
++   ========================================================================== */
++.dash-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-bottom: 2.25rem; }
++.status-breakdown { display: flex; flex-direction: column; gap: 0.5rem; }
++.status-row {
++  display: flex;
++  align-items: center;
++  gap: 0.75rem;
++  padding: 0.55rem 0.8rem;
++  background: var(--surface);
++  border: 1px solid var(--line-soft);
++  border-radius: var(--radius);
++}
++.status-row .status-tag { min-width: 110px; }
++.status-row .bar-track { flex: 1; height: 5px; background: var(--line-soft); border-radius: 3px; overflow: hidden; }
++.status-row .bar-fill { height: 100%; background: currentColor; }
++.status-row .status-count { font-family: var(--font-mono); font-size: 0.8rem; color: var(--ink-soft); min-width: 40px; text-align: right; }
++.status-row .status-amount { font-family: var(--font-mono); font-size: 0.8rem; min-width: 110px; text-align: right; }
++
++/* ==========================================================================
++   Drawer (cheque detail)
++   ========================================================================== */
++.drawer-backdrop, .modal-backdrop {
++  display: none;
++  position: fixed;
++  inset: 0;
++  background: rgba(30, 42, 50, 0.35);
++  z-index: 40;
++}
++.drawer-backdrop.open, .modal-backdrop.open { display: block; }
++
++.drawer {
++  position: fixed;
++  top: 0; right: -560px;
++  width: 560px;
++  max-width: 92vw;
++  height: 100vh;
++  background: var(--surface);
++  box-shadow: var(--shadow-drawer);
++  z-index: 50;
++  overflow-y: auto;
++  transition: right 0.25s ease;
++}
++.drawer.open { right: 0; }
++#drawer-content { padding: 1.75rem; }
++
++.drawer-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.25rem; }
++.drawer-header h2 { font-size: 1.3rem; }
++.drawer-close { border: none; background: none; font-size: 1.4rem; cursor: pointer; color: var(--ink-soft); line-height: 1; }
++.drawer-close:hover { color: var(--ink); }
++
++.detail-grid {
++  display: grid;
++  grid-template-columns: 1fr 1fr;
++  gap: 0.15rem 1.5rem;
++  margin: 1.25rem 0;
++  padding: 1rem;
++  background: var(--surface-raise);
++  border: 1px solid var(--line-soft);
++  border-radius: var(--radius);
++}
++.detail-field { padding: 0.35rem 0; border-bottom: 1px dotted var(--line-soft); display: flex; justify-content: space-between; gap: 1rem; }
++.detail-field dt { color: var(--ink-soft); font-size: 0.78rem; }
++.detail-field dd { margin: 0; font-family: var(--font-mono); font-size: 0.85rem; text-align: right; }
++
++.section-title {
++  font-family: var(--font-display);
++  font-size: 0.95rem;
++  font-weight: 600;
++  margin: 1.5rem 0 0.6rem;
++  padding-bottom: 0.35rem;
++  border-bottom: 1px solid var(--line);
++}
++
++.action-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
++
++.timeline { display: flex; flex-direction: column; gap: 0.6rem; }
++.timeline-item {
++  padding: 0.6rem 0.75rem;
++  background: var(--surface-raise);
++  border: 1px solid var(--line-soft);
++  border-left: 3px solid var(--brand);
++  border-radius: 0 var(--radius) var(--radius) 0;
++  font-size: 0.83rem;
++}
++.timeline-item.payment { border-left-color: var(--status-cleared); }
++.timeline-item.checklog { border-left-color: var(--status-oncheck); }
++.timeline-item .ti-head { display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 0.2rem; }
++.timeline-item .ti-meta { color: var(--ink-soft); font-size: 0.76rem; }
++.timeline-empty { color: var(--ink-faint); font-style: italic; font-size: 0.85rem; }
++
++/* ==========================================================================
++   Modal (forms)
++   ========================================================================== */
++.modal {
++  display: none;
++  position: fixed;
++  inset: 0;
++  z-index: 60;
++  align-items: flex-start;
++  justify-content: center;
++  overflow-y: auto;
++  padding: 4vh 1rem;
++}
++.modal.open { display: flex; }
++#modal-content {
++  background: var(--surface);
++  border-radius: var(--radius);
++  box-shadow: var(--shadow-modal);
++  width: 100%;
++  max-width: 730px;
++  padding: 1.75rem;
++
++}
++.modal-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.1rem; }
++.modal-header h2 { font-size: 1.2rem; }
++.modal-close { border: none; background: none; font-size: 1.3rem; cursor: pointer; color: var(--ink-soft); }
++
++.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.9rem; }
++.form-grid .span-2 { grid-column: span 2; }
++.field { display: flex; flex-direction: column; gap: 0.3rem; }
++.field label { font-size: 0.78rem; color: var(--ink-soft); }
++.field input, .field select, .field textarea {
++  font-family: var(--font-body);
++  font-size: 0.88rem;
++  padding: 0.5rem 0.6rem;
++  border: 1px solid var(--line);
++  border-radius: var(--radius);
++  background: var(--surface-raise);
++  color: var(--ink);
++}
++.field input:focus, .field select:focus, .field textarea:focus,
++.toolbar input:focus, .toolbar select:focus {
++  outline: 2px solid var(--brand);
++  outline-offset: 1px;
++}
++.field textarea { resize: vertical; min-height: 60px; }
++
++.form-actions { display: flex; justify-content: flex-end; gap: 0.6rem; margin-top: 1.4rem; }
++.form-error {
++  background: var(--danger-tint);
++  color: var(--danger);
++  border-radius: var(--radius);
++  padding: 0.55rem 0.75rem;
++  font-size: 0.82rem;
++  margin-bottom: 0.9rem;
++  display: none;
++}
++.form-error.show { display: block; }
++
++/* ==========================================================================
++   Toasts
++   ========================================================================== */
++.toast-root {
++  position: fixed;
++  bottom: 1.5rem;
++  right: 1.5rem;
++  display: flex;
++  flex-direction: column;
++  gap: 0.5rem;
++  z-index: 80;
++}
++.toast {
++  background: var(--ink);
++  color: var(--surface);
++  padding: 0.7rem 1rem;
++  border-radius: var(--radius);
++  font-size: 0.85rem;
++  box-shadow: 0 6px 16px rgba(0,0,0,0.2);
++  animation: toast-in 0.2s ease;
++}
++.toast.error { background: var(--danger); }
++.toast.success { background: var(--status-cleared); }
++@keyframes toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
++
++/* ==========================================================================
++   Import / Export
++   ========================================================================== */
++.ie-grid {
++  display: grid;
++  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
++  gap: 1.25rem;
++}
++.ie-card {
++  background: var(--surface);
++  border: 1px solid var(--line-soft);
++  border-radius: var(--radius);
++  padding: 1.1rem 1.2rem 1.25rem;
++  display: flex;
++  flex-direction: column;
++}
++.ie-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 0.5rem; }
++.ie-card-head h3 { margin-bottom: 0; }
++.ie-columns { font-family: var(--font-mono); font-size: 0.72rem; color: var(--ink-faint); margin: 0.2rem 0 0.9rem; word-break: break-word; }
++.ie-actions { display: flex; gap: 0.5rem; margin-bottom: 1.1rem; }
++.ie-import-form { border-top: 1px dotted var(--line-soft); padding-top: 0.9rem; }
++.ie-import-label { font-size: 0.78rem; color: var(--ink-soft); display: block; margin-bottom: 0.4rem; }
++.ie-import-row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
++.ie-import-row input[type="file"] {
++  flex: 1;
++  min-width: 150px;
++  font-size: 0.78rem;
++  font-family: var(--font-body);
++  color: var(--ink-soft);
++}
++.ie-import-row select {
++  font-size: 0.82rem;
++  padding: 0.45rem 0.5rem;
++  border: 1px solid var(--line);
++  border-radius: var(--radius);
++  background: var(--surface-raise);
++  color: var(--ink);
++}
++.ie-replace-warning {
++  color: var(--danger);
++  font-size: 0.78rem;
++  margin: 0.5rem 0 0;
++  display: none;
++}
++.ie-replace-warning.show { display: block; }
++.ie-result { margin-top: 0.7rem; }
++.ie-result .hint { margin: 0; }
++.ie-error-list {
++  margin: 0.5rem 0 0;
++  padding-left: 1.1rem;
++  font-size: 0.78rem;
++  color: var(--danger);
++  max-height: 150px;
++  overflow-y: auto;
++}
++.ie-error-list li { margin-bottom: 0.2rem; }
++
++/* ==========================================================================
++   Responsive
++   ========================================================================== */
++@media (max-width: 860px) {
++  .masthead { flex-wrap: wrap; gap: 1rem; }
++  .masthead-stats { margin-left: 0; gap: 1.2rem; }
++  main { padding: 1.25rem 1rem 3rem; }
++  .dash-grid { grid-template-columns: 1fr; }
++  .form-grid { grid-template-columns: 1fr; }
++  .form-grid .span-2 { grid-column: span 1; }
++  .drawer { width: 100vw; right: -100vw; }
++  table.ledger { font-size: 0.82rem; }
++  .ie-grid { grid-template-columns: 1fr; }
++}
++
++@media (prefers-reduced-motion: reduce) {
++  .drawer, .toast { transition: none; animation: none; }
++}
++
++/* Cheque register enhancements */
++.cheque-table-wrap{width:100%;overflow-x:auto;background:var(--surface)}
++table.ledger.cheque-register{min-width:860px;border-top:0;border-bottom:0}
++.cheque-register th,.cheque-register td{white-space:normal}
++.cheque-register .cheque-expand-col{width:42px;min-width:42px;padding-left:.55rem;padding-right:.2rem;text-align:center}
++.cheque-expand-btn{width:25px;height:25px;padding:0;border:1px solid var(--line);border-radius:50%;background:var(--surface-raise);color:var(--ink);font-family:var(--font-mono);font-size:1rem;cursor:pointer}
++.cheque-expand-btn:hover,.cheque-expand-btn:focus-visible{background:var(--brand-tint);border-color:var(--brand);outline:none}
++.cheque-register .cheque-main-row td{padding-top:.75rem;padding-bottom:.75rem}
++.cheque-primary{font-weight:500;color:var(--ink);overflow-wrap:anywhere}
++.cheque-secondary{margin-top:.16rem;color:var(--ink-soft);font-size:.78rem;line-height:1.35;overflow-wrap:anywhere}
++.cheque-register .amount-head{text-align:right}.cheque-register .amount{white-space:nowrap;font-weight:500}
++.cheque-detail-row[hidden]{display:none}.cheque-detail-row td{padding:.85rem 1rem 1rem 3.2rem!important;background:var(--brand-tint);border-bottom:1px solid var(--line)}
++.cheque-detail-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.8rem 1.4rem;margin-bottom:.8rem}.cheque-detail-grid>div{min-width:0}.cheque-detail-grid span{display:block;color:var(--ink-soft);font-size:.72rem;margin-bottom:.15rem}.cheque-detail-grid strong{display:block;font-weight:500;overflow-wrap:anywhere}
++@media(max-width:760px){.cheque-detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.cheque-detail-row td{padding-left:1rem!important}}

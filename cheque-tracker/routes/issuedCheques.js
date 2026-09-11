@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
-import { computeTotalDays, deriveChequeType } from '../lib/chequeHelpers.js';
+import { computeTotalDays, deriveChequeType, issuedStageTimestampFields } from '../lib/chequeHelpers.js';
 import {
   ISSUED_STATUSES, CLEARANCE_METHODS, ISSUED_FOLLOWUP_RESPONSES, RETURN_REASONS,
   PAYMENT_METHODS, PARTY_TYPES, isValidEnum, parseDateOrNull, isPositiveAmount,
@@ -222,6 +222,7 @@ router.patch('/:id/status', asyncHandler(async (req, res) => {
       previousStatus: status === 'ON_CHECK' ? existing.status : existing.previousStatus,
       ...(status === 'CLEARED' ? { clearanceMethod: clearanceMethod || 'PRESENTMENT' } : {}),
       ...(status === 'RETURNED' ? { returnReason: returnReason || null, returnNote: returnNote || null } : {}),
+      ...issuedStageTimestampFields(status, newStatusDate),
     },
     include: issuedInclude,
   });
@@ -367,6 +368,7 @@ router.post('/:id/payments', asyncHandler(async (req, res) => {
             clearanceMethod: 'PARTIAL_RECOVERY',
             statusDate: newStatusDate,
             totalDays: computeTotalDays(cheque.chqDate, newStatusDate),
+            clearedAt: newStatusDate,
           },
         })]
       : []),
@@ -439,6 +441,7 @@ router.patch('/:id/checklogs/:checkLogId/resolve', asyncHandler(async (req, res)
         previousStatus: null,
         statusDate: newStatusDate,
         totalDays: computeTotalDays(cheque.chqDate, newStatusDate),
+        ...issuedStageTimestampFields(resolvedStatus, newStatusDate),
       },
     }),
   ]);

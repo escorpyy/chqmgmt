@@ -22,6 +22,8 @@
   --status-cleared:   #2E7D4F;
   --status-returned:  #A23B2E;
   --status-stopped:   #6B6558;
+  --status-deposited: #6B7F3B;
+  --status-cancelled: #6B6558;
 
   --danger:  #A23B2E;
   --danger-tint: #F3E4E1;
@@ -249,6 +251,17 @@ button { font-family: var(--font-body); }
 
 main { padding: 1.75rem 2rem 4rem; max-width: 1280px; margin: 0 auto; }
 
+/* Received/Issued ledgers carry a lot of columns (bank, branch, account no,
+   multiple dates, etc.) — let the whole page stretch edge-to-edge while
+   those panels are open instead of being capped at the 1280px reading
+   width used everywhere else. */
+main:has(#panel-received.active),
+main:has(#panel-issued.active) {
+  max-width: 100%;
+  padding-left: 1.25rem;
+  padding-right: 1.25rem;
+}
+
 .panel { display: none; }
 .panel.active { display: block; }
 
@@ -341,6 +354,21 @@ table.ledger td {
 table.ledger tbody tr:hover { background: var(--brand-tint); cursor: pointer; }
 table.ledger tbody tr:last-child td { border-bottom: none; }
 
+/* Wide, column-heavy ledgers (received/issued cheques) — slightly smaller
+   type and tighter padding so every column fits without crowding. */
+table.ledger.ledger-compact th {
+  font-size: 0.68rem;
+  padding: 0.5rem 0.6rem;
+}
+table.ledger.ledger-compact td {
+  padding: 0.45rem 0.6rem;
+  font-size: 0.82rem;
+}
+table.ledger.ledger-compact .date-stack { line-height: 1.25; }
+table.ledger.ledger-compact .date-stack .date-bs { font-size: 0.82rem; }
+table.ledger.ledger-compact .date-stack .date-ad { font-size: 0.72rem; }
+table.ledger.ledger-compact .btn-sm { padding: 0.22rem 0.5rem; font-size: 0.72rem; }
+
 .pagination {
   display: flex;
   align-items: center;
@@ -426,6 +454,8 @@ td.row-actions {
 .status-RETURNED  { color: var(--status-returned); }
 .status-STOPPED   { color: var(--status-stopped); }
 .status-ISSUED    { color: var(--status-pending); }
+.status-DEPOSITED { color: var(--status-deposited); }
+.status-CANCELLED { color: var(--status-cancelled); }
 
 /* ==========================================================================
    Dashboard

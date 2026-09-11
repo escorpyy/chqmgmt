@@ -39,37 +39,52 @@ function renderIssuedTable(cheques, total, page) {
     return;
   }
   el.innerHTML = `
-    <table class="ledger">
+    <table class="ledger ledger-compact">
       <thead><tr>
-        <th>Cheque no</th><th>Cheque date</th><th>Payee</th><th>Amount</th>
-        <th>Bank · account</th><th>Status</th><th>Age</th><th>Purpose</th>
+        <th>Cheque no</th><th>Cheque date</th><th>Issue date</th><th>Payee / vendor</th>
+        <th>Bank name</th><th>Branch</th><th>Account no.</th><th>Amount</th>
+        <th>Payment purpose</th><th>Clearance date</th><th>Status</th><th>Status date</th>
+        <th>Days outstanding</th><th>Actions</th>
       </tr></thead>
       <tbody>
         ${cheques.map((c) => {
-          // "Age" tracks how long a cheque has sat in its current status.
-          // For a cleared cheque that's a fixed, historical span (totalDays,
-          // computed once at clearance); for anything still in play it's
-          // live — days since the last status change, as of right now.
+          // "Days outstanding" tracks how long a cheque has sat in its
+          // current status. For a cleared cheque that's a fixed, historical
+          // span (totalDays, computed once at clearance); for anything
+          // still in play it's live — days since the last status change.
           const ageDays = c.status === 'CLEARED' ? c.totalDays : daysSince(c.statusDate);
-          const bankAccount = [c.companyBankAccount?.bank?.name, c.companyBankAccount?.accountName]
-            .filter(Boolean).join(' · ') || '—';
           return `
           <tr data-id="${c.id}">
             <td class="num">${escapeHtml(c.chqNo)}</td>
             <td class="num">${fmtDateStacked(c.chqDate)}</td>
+            <td class="num">${fmtDateStacked(c.createdAt)}</td>
             <td>${escapeHtml(c.payeeName)}</td>
+            <td>${escapeHtml(c.companyBankAccount?.bank?.name || '—')}</td>
+            <td>${escapeHtml(c.companyBankAccount?.bank?.branch || '—')}</td>
+            <td class="num">${escapeHtml(c.companyBankAccount?.accountNumber || '—')}</td>
             <td class="amount">${fmtMoney(c.amount)}</td>
-            <td>${escapeHtml(bankAccount)}</td>
-            <td>${statusTag(c.status)}</td>
-            <td>${ageTag(ageDays)}</td>
             <td class="cell-truncate" title="${escapeHtml(c.purpose || '')}">${escapeHtml(c.purpose || '—')}</td>
+            <td class="num">${fmtDateStacked(c.clearedAt)}</td>
+            <td>${statusTag(c.status)}</td>
+            <td class="num">${fmtDateStacked(c.statusDate)}</td>
+            <td>${ageTag(ageDays)}</td>
+            <td><button type="button" class="btn btn-sm btn-ghost act-view" data-id="${c.id}">View</button></td>
           </tr>`;
         }).join('')}
       </tbody>
     </table>
     ${paginationControls(total, page, PAGE_SIZE)}`;
   el.querySelectorAll('tr[data-id]').forEach((row) => {
-    row.addEventListener('click', () => openIssuedDetail(row.dataset.id));
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('.act-view')) return;
+      openIssuedDetail(row.dataset.id);
+    });
+  });
+  el.querySelectorAll('.act-view').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openIssuedDetail(btn.dataset.id);
+    });
   });
   wirePaginationControls(el, total, page, loadIssued, PAGE_SIZE);
 }

@@ -181,7 +181,7 @@ export const TABLES = {
     label: 'Received cheques',
     columns: [
       'fiscalYear', 'receiptNo', 'refNo', 'issuerName', 'issuedOn', 'issuedOnType',
-      'chqDate', 'chqNo', 'bankName', 'presentedBankName', 'amount', 'staffName', 'status',
+      'chqDate', 'chqNo', 'bankName', 'presentedBankName', 'accountNo', 'amount', 'staffName', 'status',
     ],
     sampleRows: [{
       fiscalYear: '2082/83',
@@ -194,6 +194,7 @@ export const TABLES = {
       chqNo: '0123456',
       bankName: 'Nepal Investment Mega Bank',
       presentedBankName: '',
+      accountNo: '',
       amount: 50000,
       staffName: 'Ram Sharma',
       status: 'PENDING',
@@ -215,6 +216,7 @@ export const TABLES = {
         chqNo: c.chqNo,
         bankName: c.bank?.name || '',
         presentedBankName: c.presentedBank?.name || '',
+        accountNo: c.accountNo || '',
         amount: Number(c.amount),
         staffName: c.staff?.name || '',
         status: c.status,
@@ -270,6 +272,7 @@ export const TABLES = {
           chqNo,
           bankId: bank.id,
           presentedBankId: presentedBank?.id || null,
+          accountNo: row.accountNo ? row.accountNo.toString().trim() : null,
           amount: Number(row.amount),
           staffId: staff?.id || null,
           status,

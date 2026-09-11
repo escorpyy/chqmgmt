@@ -3,7 +3,7 @@
 // values produce a friendly 400 instead of an uncaught Prisma validation
 // error that falls through to the generic 500 handler in server.js.
 
-export const CHEQUE_STATUSES = ['PENDING', 'FOLLOWUP', 'ON_CHECK', 'PRESENTED', 'CLEARED', 'RETURNED'];
+export const CHEQUE_STATUSES = ['PENDING', 'DEPOSITED', 'FOLLOWUP', 'ON_CHECK', 'PRESENTED', 'CLEARED', 'RETURNED', 'CANCELLED'];
 export const ISSUED_STATUSES = ['ISSUED', 'FOLLOWUP', 'ON_CHECK', 'PRESENTED', 'CLEARED', 'RETURNED', 'STOPPED'];
 export const CLEARANCE_METHODS = ['PRESENTMENT', 'PARTIAL_RECOVERY'];
 export const FOLLOWUP_RESPONSES = ['CONFIRMED', 'REQUESTED_DELAY', 'REQUESTED_REPLACEMENT', 'REQUESTED_PARTIAL_PAYMENT', 'REQUESTED_RETURN', 'UNREACHABLE', 'OTHER'];

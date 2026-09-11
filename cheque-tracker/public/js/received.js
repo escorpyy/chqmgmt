@@ -3,7 +3,7 @@ import { toast } from './toast.js';
 import { state } from './state.js';
 import { openModal, closeModal, formError, clearFormError, openConfirmModal } from './modal.js';
 import { openDrawer, closeDrawer } from './drawer.js';
-import { escapeHtml, fmtDate, fmtMoney, fmtDateInput, humanize, statusTag, selectOptions, enumOptions, debounce, paginationControls, wirePaginationControls } from './utils.js';
+import { escapeHtml, fmtDate, fmtDateStacked, fmtMoney, fmtDateInput, humanize, statusTag, selectOptions, enumOptions, debounce, daysSince, ageTag, paginationControls, wirePaginationControls } from './utils.js';
 import { RECEIVED_STATUSES, FOLLOWUP_RESPONSES, RETURN_REASONS, PAYMENT_METHODS, CLEARANCE_METHODS, PARTY_TYPES } from './constants.js';
 import { loadDashboard } from './dashboard.js';
 import { syncEditableSelect } from './combobox.js';
@@ -39,27 +39,50 @@ function renderReceivedTable(cheques, total, page) {
     return;
   }
   el.innerHTML = `
-    <table class="ledger">
+    <table class="ledger ledger-compact">
       <thead><tr>
-        <th>Cheque no</th><th>Ref no</th><th>Issuer</th><th>Bank</th>
-        <th>Cheque date</th><th>Amount</th><th>Status</th>
+        <th>Cheque no</th><th>Cheque date</th><th>Received date</th><th>Party / customer</th>
+        <th>Bank name</th><th>Branch</th><th>Account no.</th><th>Amount</th>
+        <th>Deposit date</th><th>Clearance date</th><th>Status</th><th>Status date</th>
+        <th>Days pending</th><th>Actions</th>
       </tr></thead>
       <tbody>
-        ${cheques.map((c) => `
+        ${cheques.map((c) => {
+          // Days pending: fixed once cleared (totalDays, captured at clearance),
+          // otherwise live — days since the current status began.
+          const pendingDays = c.status === 'CLEARED' ? c.totalDays : daysSince(c.statusDate);
+          return `
           <tr data-id="${c.id}">
             <td class="num">${escapeHtml(c.chqNo)}</td>
-            <td class="num muted">${escapeHtml(c.refNo || '—')}</td>
+            <td class="num">${fmtDateStacked(c.chqDate)}</td>
+            <td class="num">${fmtDateStacked(c.createdAt)}</td>
             <td>${escapeHtml(c.issuer?.name || '—')}</td>
             <td>${escapeHtml(c.bank?.name || '—')}</td>
-            <td>${fmtDate(c.chqDate)}</td>
+            <td>${escapeHtml(c.bank?.branch || '—')}</td>
+            <td class="num">${escapeHtml(c.accountNo || '—')}</td>
             <td class="amount">${fmtMoney(c.amount)}</td>
+            <td class="num">${fmtDateStacked(c.depositedAt)}</td>
+            <td class="num">${fmtDateStacked(c.clearedAt)}</td>
             <td>${statusTag(c.status)}</td>
-          </tr>`).join('')}
+            <td class="num">${fmtDateStacked(c.statusDate)}</td>
+            <td>${ageTag(pendingDays)}</td>
+            <td><button type="button" class="btn btn-sm btn-ghost act-view" data-id="${c.id}">View</button></td>
+          </tr>`;
+        }).join('')}
       </tbody>
     </table>
     ${paginationControls(total, page, PAGE_SIZE)}`;
   el.querySelectorAll('tr[data-id]').forEach((row) => {
-    row.addEventListener('click', () => openChequeDetail(row.dataset.id));
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('.act-view')) return; // handled below, avoid double-fire
+      openChequeDetail(row.dataset.id);
+    });
+  });
+  el.querySelectorAll('.act-view').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openChequeDetail(btn.dataset.id);
+    });
   });
   wirePaginationControls(el, total, page, loadReceived, PAGE_SIZE);
 }
@@ -115,10 +138,14 @@ function openNewChequeModal() {
           <select name="bankId" required>${selectOptions(state.banks, 'id', (b) => b.name, 'Select bank…')}</select>
         </div>
         <div class="field">
+          <label>Account no.</label>
+          <input name="accountNo" type="text" placeholder="As written on the cheque">
+        </div>
+        <div class="field">
           <label>Presented at bank</label>
           <select name="presentedBankId">${selectOptions(state.banks, 'id', (b) => b.name, 'Same as drawee bank')}</select>
         </div>
-        <div class="field span-2">
+        <div class="field">
           <label>Handled by staff</label>
           <select name="staffId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
         </div>
@@ -278,6 +305,10 @@ function openChequeEditModal(c) {
         <div class="field">
           <label>Amount *</label>
           <input name="amount" type="number" step="0.01" min="0.01" required value="${escapeHtml(c.amount)}">
+        </div>
+        <div class="field">
+          <label>Account no.</label>
+          <input name="accountNo" type="text" placeholder="As written on the cheque" value="${escapeHtml(c.accountNo || '')}">
         </div>
         <div class="field">
           <label>Presented at bank</label>

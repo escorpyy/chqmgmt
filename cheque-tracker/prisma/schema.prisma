@@ -39,11 +39,13 @@ model Company {
 
 enum ChequeStatus {
   PENDING     // received, not yet followed up
+  DEPOSITED   // handed in / dropped at the bank, not yet submitted for clearing
   FOLLOWUP    // in the call/negotiation cycle
   ON_CHECK    // true status unknown — wasn't updated in time, needs manual re-verification
   PRESENTED   // submitted to bank
   CLEARED     // fully recovered (via bank presentment OR partial payments)
   RETURNED    // bounced/dishonored
+  CANCELLED   // receivable written off/voided without going through RETURNED
 }
 
 enum ClearanceMethod {
@@ -272,6 +274,10 @@ model Cheque {
   presentedBankId String?
   presentedBank   Bank?         @relation("PresentedBank", fields: [presentedBankId], references: [id], onDelete: Restrict)
 
+  // Issuer's account number as written on the cheque itself. Free text —
+  // not validated/unique, just transcribed for the register.
+  accountNo   String?
+
   amount      Decimal           @db.Decimal(14, 2)
 
   status      ChequeStatus      @default(PENDING)
@@ -289,6 +295,18 @@ model Cheque {
   // status/statusDate changes (in app code, or via a Postgres generated
   // column set up in a custom migration).
   totalDays   Int?
+
+  // Per-stage timestamps. Unlike statusDate (which only ever reflects the
+  // *current* status), these are stamped once when the cheque first enters
+  // that stage and then left alone — so "when was this deposited" stays
+  // answerable even after the cheque has since cleared or bounced.
+  // Set by app code in lib/chequeHelpers.js (receivedStageTimestampFields)
+  // everywhere the status can change.
+  depositedAt DateTime?
+  presentedAt DateTime?
+  clearedAt   DateTime?
+  bouncedAt   DateTime?  // stamped when status becomes RETURNED
+  cancelledAt DateTime?
 
   clearanceMethod ClearanceMethod?  // set when status becomes CLEARED
 
@@ -391,6 +409,16 @@ model IssuedCheque {
   // this preserves what it was before, without pretending we're still sure.
   previousStatus IssuedChequeStatus?
   checkLogs      IssuedChequeCheckLog[]
+
+  // Per-stage timestamps — same rationale as Cheque's: statusDate only ever
+  // reflects the *current* status, these persist per stage regardless of
+  // where the cheque ends up later. There's no depositedAt on this side —
+  // the payee deposits our cheque, not us, so we have no reliable date for
+  // it. Set by app code in lib/chequeHelpers.js (issuedStageTimestampFields).
+  presentedAt DateTime?
+  clearedAt   DateTime?
+  bouncedAt   DateTime?  // stamped when status becomes RETURNED
+  cancelledAt DateTime?  // stamped when status becomes STOPPED
 
   clearanceMethod ClearanceMethod?
   returnReason    ReturnReason?

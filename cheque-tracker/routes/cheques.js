@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
-import { computeTotalDays, deriveChequeType } from '../lib/chequeHelpers.js';
+import { computeTotalDays, deriveChequeType, receivedStageTimestampFields } from '../lib/chequeHelpers.js';
 import {
   CHEQUE_STATUSES, CLEARANCE_METHODS, FOLLOWUP_RESPONSES, RETURN_REASONS,
   PAYMENT_METHODS, PARTY_TYPES, isValidEnum, parseDateOrNull, isPositiveAmount,
@@ -77,7 +77,7 @@ router.post('/', asyncHandler(async (req, res) => {
   if (!companyId) return;
   const {
     fiscalYearId, receiptNo, refNo, issuerId, issuedOn, issuedOnType, payableToCompany,
-    chqDate, chqNo, bankId, presentedBankId, amount, staffId,
+    chqDate, chqNo, bankId, presentedBankId, amount, staffId, accountNo,
   } = req.body;
 
   const required = { fiscalYearId, issuerId, issuedOn, issuedOnType, chqDate, chqNo, bankId, amount };
@@ -131,6 +131,7 @@ router.post('/', asyncHandler(async (req, res) => {
       presentedBankId: presentedBankId || null,
       amount,
       staffId: staffId || null,
+      accountNo: accountNo || null,
     },
     include: chequeInclude,
   });
@@ -148,7 +149,7 @@ router.post('/', asyncHandler(async (req, res) => {
 //     regardless, since the API shouldn't rely on the client having asked.
 router.patch('/:id', asyncHandler(async (req, res) => {
   const {
-    refNo, presentedBankId, staffId, amount, fiscalYearId, receiptNo,
+    refNo, presentedBankId, staffId, amount, fiscalYearId, receiptNo, accountNo,
     chqDate, chqNo, bankId, issuedOnType,
   } = req.body;
 
@@ -208,6 +209,7 @@ router.patch('/:id', asyncHandler(async (req, res) => {
       ...(amount !== undefined ? { amount } : {}),
       ...(fiscalYearId !== undefined ? { fiscalYearId } : {}),
       ...(receiptNo !== undefined ? { receiptNo: receiptNo || null } : {}),
+      ...(accountNo !== undefined ? { accountNo: accountNo || null } : {}),
       // -- risky fields --
       ...(chqDate !== undefined ? { chqDate: parsedChqDate, totalDays } : {}),
       ...(chqNo !== undefined ? { chqNo } : {}),
@@ -260,6 +262,7 @@ router.patch('/:id/status', asyncHandler(async (req, res) => {
       previousStatus: status === 'ON_CHECK' ? existing.status : existing.previousStatus,
       ...(status === 'CLEARED' ? { clearanceMethod: clearanceMethod || 'PRESENTMENT' } : {}),
       ...(status === 'RETURNED' ? { returnReason: returnReason || null, returnNote: returnNote || null } : {}),
+      ...receivedStageTimestampFields(status, newStatusDate),
     },
     include: chequeInclude,
   });
@@ -308,6 +311,7 @@ router.post('/:id/replace', asyncHandler(async (req, res) => {
       presentedBankId: presentedBankId ?? original.presentedBankId,
       amount: amount ?? original.amount,
       staffId: staffId ?? original.staffId,
+      accountNo: original.accountNo,
       replacesChequeId: original.id,
     },
     include: chequeInclude,
@@ -420,6 +424,7 @@ router.post('/:id/payments', asyncHandler(async (req, res) => {
             clearanceMethod: 'PARTIAL_RECOVERY',
             statusDate: newStatusDate,
             totalDays: computeTotalDays(cheque.chqDate, newStatusDate),
+            clearedAt: newStatusDate,
           },
         })]
       : []),
@@ -494,6 +499,7 @@ router.patch('/:id/checklogs/:checkLogId/resolve', asyncHandler(async (req, res)
         previousStatus: null,
         statusDate: newStatusDate,
         totalDays: computeTotalDays(cheque.chqDate, newStatusDate),
+        ...receivedStageTimestampFields(resolvedStatus, newStatusDate),
       },
     }),
   ]);
