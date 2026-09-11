@@ -7,6 +7,7 @@ import {
   PAYMENT_METHODS, PARTY_TYPES, isValidEnum, parseDateOrNull, isPositiveAmount,
 } from '../lib/enums.js';
 import { companyWhere, requireSingleCompany } from '../lib/companyScope.js';
+import { parsePagination, statusWhereFragment, parseSort } from '../lib/listQuery.js';
 
 const router = Router();
 
@@ -23,13 +24,17 @@ const chequeInclude = {
   replacedBy: true,
 };
 
-// GET /api/cheques?status=PENDING&search=abc
+// GET /api/cheques?status=PENDING&search=abc&page=1&pageSize=50
+// status may be a comma-separated list ("PENDING,FOLLOWUP"); sort is
+// "field:asc|desc" for chqDate, amount, or chqNo (defaults to chqDate desc).
 router.get('/', asyncHandler(async (req, res) => {
-  const { status, search, includeDeleted } = req.query;
+  const { status, search, includeDeleted, sort } = req.query;
+  const { page, pageSize, skip, take } = parsePagination(req.query);
+
   const where = {
     ...companyWhere(req),
     ...(includeDeleted === 'true' ? {} : { deletedAt: null }),
-    ...(status ? { status } : {}),
+    ...statusWhereFragment(status, CHEQUE_STATUSES),
     ...(search
       ? {
           OR: [
@@ -41,13 +46,19 @@ router.get('/', asyncHandler(async (req, res) => {
         }
       : {}),
   };
+  const orderBy = parseSort(sort, ['chqDate', 'amount', 'chqNo'], { chqDate: 'desc' });
 
-  const cheques = await prisma.cheque.findMany({
-    where,
-    include: { fiscalYear: true, issuer: true, bank: true, presentedBank: true, staff: true },
-    orderBy: { chqDate: 'desc' },
-  });
-  res.json(cheques);
+  const [cheques, total] = await Promise.all([
+    prisma.cheque.findMany({
+      where,
+      include: { fiscalYear: true, issuer: true, bank: true, presentedBank: true, staff: true },
+      orderBy,
+      skip,
+      take,
+    }),
+    prisma.cheque.count({ where }),
+  ]);
+  res.json({ cheques, total, page, pageSize });
 }));
 
 // GET /api/cheques/:id

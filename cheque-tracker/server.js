@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import compression from 'compression';
 import session from 'express-session';
 import connectPgSimple from 'connect-pg-simple';
 import pg from 'pg';
@@ -32,6 +33,11 @@ if (!process.env.SESSION_SECRET) {
 }
 
 const app = express();
+// Gzip/brotli every response above the default 1KB threshold — JSON API
+// responses and the unbundled public/js/*.js files both compress well
+// (typically 60-80% smaller), and this is essentially free CPU-wise for an
+// app this size.
+app.use(compression());
 // credentials: true is required for the session cookie to travel with
 // fetch() requests made from the frontend (which sets credentials: 'include').
 app.use(cors({ origin: true, credentials: true }));
@@ -83,7 +89,25 @@ app.use('/api/daily-balance', requireCompanyContext, dailyBalanceRouter);
 app.use('/api/import-export', requireCompanyContext, importExportRouter);
 
 // ---- Static frontend ------------------------------------------------------
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  etag: true,
+  lastModified: true,
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) {
+      // Entry points (index.html, login.html) must always be revalidated —
+      // they reference the JS/CSS files below by exact filename, so caching
+      // them risks serving an old page that points at files a later patch
+      // renamed or removed.
+      res.setHeader('Cache-Control', 'no-cache');
+    } else {
+      // JS/CSS/etc: cache for a day, still revalidated via ETag after that
+      // rather than trusted forever. There's no build step / content-hashed
+      // filenames here, so after applying a patch, do one hard refresh
+      // (Ctrl+Shift+R) to be safe immediately rather than waiting up to a day.
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+    }
+  },
+}));
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api/')) return next();
   res.sendFile(path.join(__dirname, 'public', 'index.html'));

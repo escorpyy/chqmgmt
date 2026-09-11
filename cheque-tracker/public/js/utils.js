@@ -114,3 +114,38 @@ export function debounce(fn, wait) {
     t = setTimeout(() => fn(...args), wait);
   };
 }
+
+// ============================================================================
+// Pagination (shared by received.js and issued.js — both ledgers page the
+// same way, against a { cheques/total/page/pageSize } list response)
+// ============================================================================
+
+// Returns the "Showing X–Y of Z · Prev · Next" markup for below a ledger
+// table. `loader` isn't called here — see wirePaginationControls, which
+// wires the actual click handlers once this HTML is in the DOM.
+export function paginationControls(total, page, pageSize = 50) {
+  if (total <= pageSize) return '';
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const start = (page - 1) * pageSize + 1;
+  const end = Math.min(total, page * pageSize);
+  return `
+    <div class="pagination">
+      <span class="pagination-summary">Showing ${start}–${end} of ${total}</span>
+      <div class="pagination-nav">
+        <button type="button" class="btn btn-sm" data-page-action="prev" ${page <= 1 ? 'disabled' : ''}>‹ Prev</button>
+        <span class="pagination-page">Page ${page} of ${totalPages}</span>
+        <button type="button" class="btn btn-sm" data-page-action="next" ${page >= totalPages ? 'disabled' : ''}>Next ›</button>
+      </div>
+    </div>`;
+}
+
+// Wires the Prev/Next buttons rendered by paginationControls() inside
+// `container`. `loader(page)` is whichever of loadReceived/loadIssued
+// produced this render — calling it re-fetches and re-renders that page.
+export function wirePaginationControls(container, total, page, loader, pageSize = 50) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const prevBtn = container.querySelector('[data-page-action="prev"]');
+  const nextBtn = container.querySelector('[data-page-action="next"]');
+  if (prevBtn) prevBtn.addEventListener('click', () => { if (page > 1) loader(page - 1); });
+  if (nextBtn) nextBtn.addEventListener('click', () => { if (page < totalPages) loader(page + 1); });
+}

@@ -340,6 +340,18 @@ table.ledger td {
 }
 table.ledger tbody tr:hover { background: var(--brand-tint); cursor: pointer; }
 table.ledger tbody tr:last-child td { border-bottom: none; }
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0.25rem;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+.pagination-nav { display: flex; align-items: center; gap: 0.6rem; }
+.pagination-page { font-variant-numeric: tabular-nums; }
 .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .date-stack { display: flex; flex-direction: column; line-height: 1.35; }
 .date-stack .date-bs { font-weight: 500; }

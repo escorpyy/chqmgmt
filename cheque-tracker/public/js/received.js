@@ -3,7 +3,7 @@ import { toast } from './toast.js';
 import { state } from './state.js';
 import { openModal, closeModal, formError, clearFormError, openConfirmModal } from './modal.js';
 import { openDrawer, closeDrawer } from './drawer.js';
-import { escapeHtml, fmtDate, fmtMoney, fmtDateInput, humanize, statusTag, selectOptions, enumOptions, debounce } from './utils.js';
+import { escapeHtml, fmtDate, fmtMoney, fmtDateInput, humanize, statusTag, selectOptions, enumOptions, debounce, paginationControls, wirePaginationControls } from './utils.js';
 import { RECEIVED_STATUSES, FOLLOWUP_RESPONSES, RETURN_REASONS, PAYMENT_METHODS, CLEARANCE_METHODS, PARTY_TYPES } from './constants.js';
 import { loadDashboard } from './dashboard.js';
 import { syncEditableSelect } from './combobox.js';
@@ -11,22 +11,28 @@ import { syncEditableSelect } from './combobox.js';
 // ============================================================================
 // RECEIVED CHEQUES
 // ============================================================================
-export async function loadReceived() {
+const PAGE_SIZE = 50;
+let receivedPage = 1;
+
+export async function loadReceived(page = receivedPage) {
   const search = document.getElementById('received-search').value;
   const status = document.getElementById('received-status-filter').value;
   const params = new URLSearchParams();
   if (search) params.set('search', search);
   if (status) params.set('status', status);
+  params.set('page', page);
+  params.set('pageSize', PAGE_SIZE);
 
   try {
-    const cheques = await api(`/cheques?${params.toString()}`);
-    renderReceivedTable(cheques);
+    const { cheques, total } = await api(`/cheques?${params.toString()}`);
+    receivedPage = page;
+    renderReceivedTable(cheques, total, page);
   } catch (err) {
     toast(err.message, 'error');
   }
 }
 
-function renderReceivedTable(cheques) {
+function renderReceivedTable(cheques, total, page) {
   const el = document.getElementById('received-table');
   if (!cheques.length) {
     el.innerHTML = `<table class="ledger"><tbody><tr class="empty-row"><td>No cheques match. Try clearing filters, or record a new cheque.</td></tr></tbody></table>`;
@@ -50,14 +56,16 @@ function renderReceivedTable(cheques) {
             <td>${statusTag(c.status)}</td>
           </tr>`).join('')}
       </tbody>
-    </table>`;
+    </table>
+    ${paginationControls(total, page, PAGE_SIZE)}`;
   el.querySelectorAll('tr[data-id]').forEach((row) => {
     row.addEventListener('click', () => openChequeDetail(row.dataset.id));
   });
+  wirePaginationControls(el, total, page, loadReceived, PAGE_SIZE);
 }
 
-document.getElementById('received-search').addEventListener('input', debounce(loadReceived, 300));
-document.getElementById('received-status-filter').addEventListener('change', loadReceived);
+document.getElementById('received-search').addEventListener('input', debounce(() => loadReceived(1), 300));
+document.getElementById('received-status-filter').addEventListener('change', () => loadReceived(1));
 
 document.getElementById('btn-new-cheque').addEventListener('click', () => openNewChequeModal());
 

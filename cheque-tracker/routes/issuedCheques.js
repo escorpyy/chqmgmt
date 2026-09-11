@@ -7,6 +7,7 @@ import {
   PAYMENT_METHODS, PARTY_TYPES, isValidEnum, parseDateOrNull, isPositiveAmount,
 } from '../lib/enums.js';
 import { companyWhere, requireSingleCompany } from '../lib/companyScope.js';
+import { parsePagination, statusWhereFragment, parseSort } from '../lib/listQuery.js';
 
 const router = Router();
 
@@ -21,12 +22,15 @@ const issuedInclude = {
   replacedBy: true,
 };
 
+// GET /api/issued-cheques?status=ISSUED&search=abc&page=1&pageSize=50
 router.get('/', asyncHandler(async (req, res) => {
-  const { status, search, includeDeleted } = req.query;
+  const { status, search, includeDeleted, sort } = req.query;
+  const { page, pageSize, skip, take } = parsePagination(req.query);
+
   const where = {
     ...companyWhere(req),
     ...(includeDeleted === 'true' ? {} : { deletedAt: null }),
-    ...(status ? { status } : {}),
+    ...statusWhereFragment(status, ISSUED_STATUSES),
     ...(search
       ? {
           OR: [
@@ -37,13 +41,19 @@ router.get('/', asyncHandler(async (req, res) => {
         }
       : {}),
   };
+  const orderBy = parseSort(sort, ['chqDate', 'amount', 'chqNo'], { chqDate: 'desc' });
 
-  const cheques = await prisma.issuedCheque.findMany({
-    where,
-    include: { companyBankAccount: { include: { bank: true } }, payee: true, issuedBy: true },
-    orderBy: { chqDate: 'desc' },
-  });
-  res.json(cheques);
+  const [cheques, total] = await Promise.all([
+    prisma.issuedCheque.findMany({
+      where,
+      include: { companyBankAccount: { include: { bank: true } }, payee: true, issuedBy: true },
+      orderBy,
+      skip,
+      take,
+    }),
+    prisma.issuedCheque.count({ where }),
+  ]);
+  res.json({ cheques, total, page, pageSize });
 }));
 
 router.get('/:id', asyncHandler(async (req, res) => {

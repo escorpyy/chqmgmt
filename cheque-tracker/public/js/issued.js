@@ -3,7 +3,7 @@ import { toast } from './toast.js';
 import { state } from './state.js';
 import { openModal, closeModal, formError, clearFormError, openConfirmModal } from './modal.js';
 import { openDrawer, closeDrawer } from './drawer.js';
-import { escapeHtml, fmtDate, fmtDateStacked, fmtMoney, fmtDateInput, humanize, statusTag, selectOptions, enumOptions, debounce, daysSince, ageTag } from './utils.js';
+import { escapeHtml, fmtDate, fmtDateStacked, fmtMoney, fmtDateInput, humanize, statusTag, selectOptions, enumOptions, debounce, daysSince, ageTag, paginationControls, wirePaginationControls } from './utils.js';
 import { ISSUED_STATUSES, ISSUED_FOLLOWUP_RESPONSES, RETURN_REASONS, PAYMENT_METHODS, CLEARANCE_METHODS, PARTY_TYPES } from './constants.js';
 import { loadDashboard } from './dashboard.js';
 import { syncEditableSelect } from './combobox.js';
@@ -11,22 +11,28 @@ import { syncEditableSelect } from './combobox.js';
 // ============================================================================
 // ISSUED CHEQUES
 // ============================================================================
-export async function loadIssued() {
+const PAGE_SIZE = 50;
+let issuedPage = 1;
+
+export async function loadIssued(page = issuedPage) {
   const search = document.getElementById('issued-search').value;
   const status = document.getElementById('issued-status-filter').value;
   const params = new URLSearchParams();
   if (search) params.set('search', search);
   if (status) params.set('status', status);
+  params.set('page', page);
+  params.set('pageSize', PAGE_SIZE);
 
   try {
-    const cheques = await api(`/issued-cheques?${params.toString()}`);
-    renderIssuedTable(cheques);
+    const { cheques, total } = await api(`/issued-cheques?${params.toString()}`);
+    issuedPage = page;
+    renderIssuedTable(cheques, total, page);
   } catch (err) {
     toast(err.message, 'error');
   }
 }
 
-function renderIssuedTable(cheques) {
+function renderIssuedTable(cheques, total, page) {
   const el = document.getElementById('issued-table');
   if (!cheques.length) {
     el.innerHTML = `<table class="ledger"><tbody><tr class="empty-row"><td>No issued cheques match. Try clearing filters, or issue a new cheque.</td></tr></tbody></table>`;
@@ -60,14 +66,16 @@ function renderIssuedTable(cheques) {
           </tr>`;
         }).join('')}
       </tbody>
-    </table>`;
+    </table>
+    ${paginationControls(total, page, PAGE_SIZE)}`;
   el.querySelectorAll('tr[data-id]').forEach((row) => {
     row.addEventListener('click', () => openIssuedDetail(row.dataset.id));
   });
+  wirePaginationControls(el, total, page, loadIssued, PAGE_SIZE);
 }
 
-document.getElementById('issued-search').addEventListener('input', debounce(loadIssued, 300));
-document.getElementById('issued-status-filter').addEventListener('change', loadIssued);
+document.getElementById('issued-search').addEventListener('input', debounce(() => loadIssued(1), 300));
+document.getElementById('issued-status-filter').addEventListener('change', () => loadIssued(1));
 
 document.getElementById('btn-new-issued').addEventListener('click', () => openNewIssuedModal());
 

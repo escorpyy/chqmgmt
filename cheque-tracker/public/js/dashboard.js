@@ -25,12 +25,12 @@ export async function loadDashboard() {
   }
 
   try {
-    const cheques = await api('/cheques');
-    const attention = cheques
-      .filter((c) => ['PENDING', 'FOLLOWUP'].includes(c.status))
-      .sort((a, b) => new Date(a.chqDate) - new Date(b.chqDate))
-      .slice(0, 8);
-    renderAttentionTable(attention);
+    // Ask the server for exactly what this widget needs — the oldest 8
+    // still-pending cheques — instead of pulling every cheque and filtering
+    // client-side, which used to mean re-downloading the whole ledger just
+    // to show 8 rows.
+    const { cheques } = await api('/cheques?status=PENDING,FOLLOWUP&sort=chqDate:asc&pageSize=8');
+    renderAttentionTable(cheques);
   } catch (err) {
     toast(err.message, 'error');
   }
