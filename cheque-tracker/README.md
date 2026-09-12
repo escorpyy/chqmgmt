@@ -101,6 +101,23 @@ Sessions are stored server-side in Postgres (the `session` table, created by
 the migration above) via `connect-pg-simple`, so restarting the server
 doesn't log anyone out.
 
+### Administrator password recovery
+
+If the only administrator forgets the password, run the maintenance command
+from the application directory on a trusted server environment with access to
+the configured `DATABASE_URL`:
+
+```bash
+npm run reset-admin -- admin
+```
+
+The username argument defaults to `admin`. The command only resets an existing
+user whose role is `ADMIN`; it never creates a user, changes a role, activates
+an account, prints the password, or accepts a password from shell history. It
+prompts for the new password and confirmation without echoing either value.
+Keep server and database access restricted because anyone who can run this
+command can recover an administrator account.
+
 ## 6. Start the server
 
 ```bash
