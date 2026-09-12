@@ -49,9 +49,10 @@ cp .env.example .env
 The normal `npm run dev` and `npm start` commands now launch a guided
 connection screen before login when no working configuration is available.
 The screen can scan common local PostgreSQL ports, test host/port/database/
-username/password, save a local configuration, and then continue to the normal
-login screen. If `DATABASE_URL` and `SESSION_SECRET` are already present in
-`.env`, the application starts directly.
+username/password, apply committed Prisma migrations and manual safety
+constraints, save a local configuration, and then continue to the normal login
+screen. If `DATABASE_URL` and `SESSION_SECRET` are already present in `.env`,
+the application starts directly.
 
 For a first local setup, make sure the target database exists, for example:
 
@@ -64,15 +65,18 @@ The guided screen currently saves its connection details in the ignored local
 development-friendly implementation. A production Windows installer should
 replace the password field with Windows Credential Manager or DPAPI storage.
 
-## 3. Run the Prisma migration
+## 3. Run the Prisma migration manually when needed
 
 ```bash
 npx prisma migrate dev --name init
 ```
 
-This creates all tables/enums from `prisma/schema.prisma` and generates the
-Prisma Client (with the `driverAdapters` preview feature the app needs to run
-through `@prisma/adapter-pg`).
+The first-run connection screen uses the committed migrations with
+`prisma migrate deploy`, so this manual step is normally needed only for
+development when creating a new migration. The command creates all
+tables/enums from `prisma/schema.prisma` and generates the Prisma Client (with
+the `driverAdapters` preview feature the app needs to run through
+`@prisma/adapter-pg`).
 
 ## 4. Apply the manual migration additions
 
@@ -83,7 +87,9 @@ party firm/individual sanity, follow-up/check-log date ordering, the
 case-insensitive unique index on `Bank.name`, and the two triggers that stop
 cumulative payments from exceeding a cheque's amount.
 
-Apply it once, right after your first migration:
+The first-run connection screen applies this automatically after the Prisma
+migrations. Apply it manually only when using direct `.env` startup or when
+resetting a development database:
 
 ```bash
 npm run db:apply-manual

@@ -51,9 +51,8 @@ function friendlyConnectionError(err) {
   return err.message || 'Could not connect to PostgreSQL.';
 }
 
-async function saveConfig(details) {
-  await fs.mkdir(configDir, { recursive: true, mode: 0o700 });
-  const saved = {
+function createConfig(details) {
+  return {
     host: details.host,
     port: Number(details.port),
     database: details.database,
@@ -61,9 +60,37 @@ async function saveConfig(details) {
     password: details.password,
     sessionSecret: crypto.randomBytes(32).toString('hex'),
   };
+}
+
+async function saveConfig(saved) {
+  await fs.mkdir(configDir, { recursive: true, mode: 0o700 });
   await fs.writeFile(configPath, `${JSON.stringify(saved, null, 2)}\n`, { mode: 0o600 });
   await fs.chmod(configPath, 0o600).catch(() => {});
   return saved;
+}
+
+function runCommand(command, args, label) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: __dirname,
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+    child.stdout.resume();
+    child.stderr.resume();
+    child.on('error', () => reject(new Error(`${label} could not be started.`)));
+    child.on('close', (code) => {
+      if (code === 0) return resolve();
+      reject(new Error(`${label} failed with exit code ${code ?? 'unknown'}.`));
+    });
+  });
+}
+
+async function runDatabaseSetup() {
+  const prismaCli = path.join(__dirname, 'node_modules', 'prisma', 'build', 'index.js');
+  await runCommand(process.execPath, [prismaCli, 'migrate', 'deploy'], 'Prisma migrations');
+  await runCommand(process.execPath, ['scripts/apply-manual-migration.js'], 'Database safety constraints');
 }
 
 function applyConfig(config) {
@@ -101,8 +128,16 @@ function startSetupServer() {
     if (validationError) return res.status(400).json({ error: validationError });
     const result = await testConnection(details);
     if (!result.ok) return res.status(400).json(result);
-    const saved = await saveConfig(details);
+    const saved = createConfig(details);
     applyConfig(saved);
+    try {
+      await runDatabaseSetup();
+    } catch (err) {
+      delete process.env.DATABASE_URL;
+      delete process.env.SESSION_SECRET;
+      return res.status(500).json({ error: `${err.message} The connection was not saved.` });
+    }
+    await saveConfig(saved);
     res.json({ ok: true, message: 'Connection saved. Starting the application.' });
     server.close(async () => {
       await startApplication();

@@ -57,7 +57,7 @@ form.addEventListener('submit', async (event) => {
     const testBody = await test.json();
     if (!test.ok || !testBody.ok) throw new Error(testBody.error || 'Could not connect to PostgreSQL.');
 
-    setStatus('Connection verified. Saving configuration…');
+    setStatus('Connection verified. Applying database migrations and safety constraints…');
     const save = await fetch('/api/setup/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
