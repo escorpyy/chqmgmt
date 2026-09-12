@@ -118,6 +118,12 @@ prompts for the new password and confirmation without echoing either value.
 Keep server and database access restricted because anyone who can run this
 command can recover an administrator account.
 
+The login screen's **Forgot password?** link explains both recovery paths
+without attempting an unauthenticated password reset. For a future packaged
+desktop release, this link can lead to a support-verified, one-time recovery
+workflow or a separate signed recovery utility. Do not embed a permanent
+password or hidden account in the executable.
+
 ## 6. Start the server
 
 ```bash

@@ -30,6 +30,29 @@
     box-sizing: border-box;
   }
   .login-card .btn-primary { width: 100%; margin-top: 0.5rem; }
+  .login-help { margin: 1rem 0 0; text-align: center; font-size: 0.85rem; }
+  .login-help button {
+    appearance: none;
+    border: 0;
+    padding: 0;
+    background: none;
+    color: var(--brand, #315d68);
+    text-decoration: underline;
+    cursor: pointer;
+    font: inherit;
+  }
+  .recovery-panel {
+    margin-top: 1rem;
+    padding: 1rem;
+    border: 1px solid var(--border, #ddd);
+    border-radius: 6px;
+    background: var(--surface-soft, #f7f7f5);
+    font-size: 0.86rem;
+  }
+  .recovery-panel h2 { margin: 0 0 0.5rem; font-size: 1rem; }
+  .recovery-panel p { margin: 0.5rem 0; }
+  .recovery-panel code { display: block; margin: 0.65rem 0; overflow-x: auto; }
+  .recovery-panel[hidden] { display: none; }
 </style>
 </head>
 <body>
@@ -50,6 +73,14 @@
       </div>
       <button type="submit" class="btn btn-primary">Sign in</button>
     </form>
+    <p class="login-help"><button type="button" id="forgot-password">Forgot password?</button></p>
+    <section id="recovery-panel" class="recovery-panel" hidden aria-labelledby="recovery-title">
+      <h2 id="recovery-title">Password recovery</h2>
+      <p>If another administrator can sign in, they can reset your password from the <strong>Users</strong> section.</p>
+      <p>If you are the only administrator, ask the person who manages the application server to run this command in the application folder:</p>
+      <code tabindex="-1">npm run reset-admin -- admin</code>
+      <p>This requires trusted access to the application and database. It does not create a hidden account or bypass permissions.</p>
+    </section>
   </div>
 </div>
 

@@ -10,6 +10,13 @@ import { API } from './constants.js';
 
 const form = document.getElementById('login-form');
 const errorEl = form.querySelector('.form-error');
+const forgotPasswordButton = document.getElementById('forgot-password');
+const recoveryPanel = document.getElementById('recovery-panel');
+
+forgotPasswordButton.addEventListener('click', () => {
+  recoveryPanel.hidden = !recoveryPanel.hidden;
+  if (!recoveryPanel.hidden) recoveryPanel.querySelector('code').focus?.();
+});
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
