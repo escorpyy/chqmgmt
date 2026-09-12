@@ -141,20 +141,30 @@ function renderReceivedTable(cheques, total, page) {
     th.addEventListener('click', () => {
       const field = th.dataset.sortField;
       const existing = receivedSort.find((s) => s.field === field);
-      if (existing) {
-        // Already an active level — toggle its direction in place. Its
-        // priority relative to the other levels doesn't change.
-        existing.dir = existing.dir === 'asc' ? 'desc' : 'asc';
-      } else {
-        // New column — added as the lowest-priority tie-breaker; every
-        // level already active is left exactly as it was.
+      let message;
+      if (!existing) {
+        // 1st click on this column — add it as the next tie-breaker level.
         receivedSort.push({ field, dir: 'asc' });
+        message = 'ascending';
+      } else if (existing.dir === 'asc') {
+        // 2nd click — same level, just flip to descending.
+        existing.dir = 'desc';
+        message = 'descending';
+      } else {
+        // 3rd click — drop this column out of the sort entirely, leaving
+        // every other active level exactly where it was (including if this
+        // was the last one — that just means no explicit sort is active).
+        receivedSort = receivedSort.filter((s) => s.field !== field);
+        message = null;
       }
-      const level = receivedSort.find((s) => s.field === field);
-      const levelNum = receivedSort.length > 1 ? ` (level ${receivedSort.indexOf(level) + 1})` : '';
       const col = RECEIVED_COLUMNS.find((c) => c.field === field);
-      const dirLabel = level.dir === 'asc' ? 'ascending' : 'descending';
-      toast(`Sorting by ${col.label} — ${dirLabel}${levelNum}`);
+      if (message) {
+        const level = receivedSort.find((s) => s.field === field);
+        const levelNum = receivedSort.length > 1 ? ` (level ${receivedSort.indexOf(level) + 1})` : '';
+        toast(`Sorting by ${col.label} — ${message}${levelNum}`);
+      } else {
+        toast(`Stopped sorting by ${col.label}`);
+      }
       loadReceived(1);
     });
   });
