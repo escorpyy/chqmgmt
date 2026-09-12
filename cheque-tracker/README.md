@@ -42,15 +42,27 @@ npm install
 
 ```bash
 cp .env.example .env
-# edit .env — point DATABASE_URL at your local Postgres instance,
-# and set SESSION_SECRET to a long random string (e.g. `openssl rand -hex 32`)
+# edit .env — point DATABASE_URL at your local Postgres instance
+# and set SESSION_SECRET to a long random string
 ```
 
-Make sure the target database exists, e.g.:
+The normal `npm run dev` and `npm start` commands now launch a guided
+connection screen before login when no working configuration is available.
+The screen can scan common local PostgreSQL ports, test host/port/database/
+username/password, save a local configuration, and then continue to the normal
+login screen. If `DATABASE_URL` and `SESSION_SECRET` are already present in
+`.env`, the application starts directly.
+
+For a first local setup, make sure the target database exists, for example:
 
 ```bash
 createdb cheque_tracker
 ```
+
+The guided screen currently saves its connection details in the ignored local
+`data/connection.json` file with restrictive filesystem permissions. This is a
+development-friendly implementation. A production Windows installer should
+replace the password field with Windows Credential Manager or DPAPI storage.
 
 ## 3. Run the Prisma migration
 
