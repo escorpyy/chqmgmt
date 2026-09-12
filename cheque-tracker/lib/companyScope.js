@@ -1,12 +1,17 @@
 import { prisma } from './prisma.js';
 
-// Runs after requireAuth. Loads which companies the current user owns
-// (companies are owned 1:1 by their creator — no cross-user sharing yet)
-// so every request downstream can answer "what am I allowed to see" without
-// re-querying it repeatedly.
+// Runs after requireAuth. Loads which companies the current user can see —
+// ones they created (owner), plus ones an admin has explicitly granted them
+// access to via CompanyMember — so every request downstream can answer
+// "what am I allowed to see" without re-querying it repeatedly.
 export async function loadCompanyScope(req, res, next) {
   const companies = await prisma.company.findMany({
-    where: { createdById: req.session.userId },
+    where: {
+      OR: [
+        { createdById: req.session.userId },
+        { members: { some: { userId: req.session.userId } } },
+      ],
+    },
     select: { id: true },
     orderBy: { createdAt: 'asc' },
   });

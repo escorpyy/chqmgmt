@@ -48,6 +48,9 @@ export async function loadUsers() {
   } catch (err) {
     toast(err.message, 'error');
   }
+  // Company access lives in the same tab, right below the users table —
+  // load it alongside rather than requiring a separate tab entry.
+  loadCompanyAccess();
 }
 
 function openEditUserModal(user) {
@@ -162,6 +165,114 @@ function openNewUserModal() {
           loadUsers();
         } catch (err) {
           formError(form, err.message);
+        }
+      });
+    },
+  });
+}
+
+// ============================================================================
+// COMPANY ACCESS (admin only) — a company is only visible to whoever
+// created it, plus anyone granted access here via CompanyMember. This is
+// how a STAFF account (which never creates its own company) gets to see
+// any data at all.
+// ============================================================================
+export async function loadCompanyAccess() {
+  try {
+    const [companies, users] = await Promise.all([api('/companies/all'), api('/users')]);
+    const el = document.getElementById('company-access-table');
+    if (!companies.length) {
+      el.innerHTML = `<table class="ledger"><tbody><tr class="empty-row"><td>No companies yet.</td></tr></tbody></table>`;
+      return;
+    }
+    el.innerHTML = `
+      <table class="ledger">
+        <thead><tr><th>Company</th><th>Owner</th><th>Members</th><th></th></tr></thead>
+        <tbody>
+          ${companies.map((c) => `
+            <tr data-id="${c.id}">
+              <td>${escapeHtml(c.name)}</td>
+              <td>${escapeHtml(c.owner?.username || '—')}</td>
+              <td>${c.members.length ? c.members.map((m) => escapeHtml(m.username)).join(', ') : '<span class="hint">None</span>'}</td>
+              <td class="row-actions">
+                <button class="btn btn-sm" data-action="manage">Manage access</button>
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`;
+    el.querySelectorAll('tr[data-id]').forEach((row) => {
+      const company = companies.find((c) => c.id === row.dataset.id);
+      row.querySelector('[data-action="manage"]').addEventListener('click', () => {
+        openManageAccessModal(company, users);
+      });
+    });
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+function openManageAccessModal(company, users) {
+  const memberIds = new Set(company.members.map((m) => m.id));
+  // Anyone who isn't already the owner or an existing member is eligible
+  // to be added. Deactivated users can still be shown/removed, just not
+  // newly added (they couldn't sign in to use the access anyway).
+  const addable = users.filter((u) => u.id !== company.owner?.id && !memberIds.has(u.id) && u.isActive);
+
+  const body = `
+    <p class="hint" style="margin-top:0">Owner: ${escapeHtml(company.owner?.username || '—')} (always has access; managed by deleting/deactivating the user, not here).</p>
+    <div id="member-list">
+      ${company.members.length ? `
+        <table class="ledger">
+          <thead><tr><th>User</th><th></th></tr></thead>
+          <tbody>
+            ${company.members.map((m) => `
+              <tr data-user-id="${m.id}">
+                <td>${escapeHtml(m.username)}</td>
+                <td class="row-actions"><button type="button" class="btn btn-sm btn-danger" data-action="remove">Remove</button></td>
+              </tr>`).join('')}
+          </tbody>
+        </table>` : '<p class="hint">No additional members yet.</p>'}
+    </div>
+    <form id="form-add-member" class="form-grid" style="margin-top:1rem;">
+      <div class="field span-2">
+        <label>Grant access to</label>
+        <select name="userId" ${addable.length ? '' : 'disabled'}>
+          ${addable.length
+            ? addable.map((u) => `<option value="${u.id}">${escapeHtml(u.username)}</option>`).join('')
+            : '<option value="">No eligible users</option>'}
+        </select>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary" ${addable.length ? '' : 'disabled'}>Add</button>
+      </div>
+    </form>`;
+
+  openModal(`Manage access — ${escapeHtml(company.name)}`, body, {
+    onMount: () => {
+      document.getElementById('member-list').querySelectorAll('[data-action="remove"]').forEach((btn) => {
+        btn.addEventListener('click', async (e) => {
+          const userId = e.target.closest('tr').dataset.userId;
+          try {
+            await api(`/companies/${company.id}/members/${userId}`, { method: 'DELETE' });
+            toast('Access removed', 'success');
+            closeModal();
+            loadCompanyAccess();
+          } catch (err) {
+            toast(err.message, 'error');
+          }
+        });
+      });
+      document.getElementById('form-add-member').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const userId = new FormData(e.currentTarget).get('userId');
+        if (!userId) return;
+        try {
+          await api(`/companies/${company.id}/members`, { method: 'POST', body: JSON.stringify({ userId }) });
+          toast('Access granted', 'success');
+          closeModal();
+          loadCompanyAccess();
+        } catch (err) {
+          toast(err.message, 'error');
         }
       });
     },

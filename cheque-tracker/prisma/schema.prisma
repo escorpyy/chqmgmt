@@ -23,6 +23,11 @@ model Company {
   createdById String
   createdBy   User   @relation(fields: [createdById], references: [id], onDelete: Restrict)
 
+  // Additional users granted access by an admin, beyond the creator/owner.
+  // See CompanyMember below — this is what lets a STAFF account actually
+  // see any data at all, since access used to be creator-only.
+  members     CompanyMember[]
+
   parties             Party[]
   banks               Bank[]
   staff               Staff[]
@@ -35,6 +40,26 @@ model Company {
   updatedAt DateTime @updatedAt
 
   @@index([createdById])
+}
+
+// Grants a user (typically STAFF) access to a company they didn't create.
+// Pure access-control record, not financial data, so unlike the models
+// above this cascades: deleting the company or the user should just drop
+// the grant, not be blocked by it.
+model CompanyMember {
+  id        String   @id @default(cuid())
+
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([companyId, userId])
+  @@index([companyId])
+  @@index([userId])
 }
 
 enum ChequeStatus {
@@ -537,7 +562,8 @@ model User {
   isActive     Boolean   @default(true)
   lastLoginAt  DateTime?
 
-  companies    Company[]
+  companies    Company[]        // companies this user created/owns
+  companyMemberships CompanyMember[] // companies this user was granted access to, without owning them
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
