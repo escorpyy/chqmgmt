@@ -180,17 +180,22 @@ async function startApplication() {
   await import('./server.js');
 }
 
+async function prepareAndStartApplication() {
+  await runDatabaseSetup();
+  await startApplication();
+}
+
 async function main() {
   let config = await readSavedConfig();
   if (!config && process.env.DATABASE_URL && process.env.SESSION_SECRET) {
-    await startApplication();
+    await prepareAndStartApplication();
     return;
   }
   if (config) {
     applyConfig(config);
     const result = await testConnection(config);
     if (result.ok && process.env.SESSION_SECRET) {
-      await startApplication();
+      await prepareAndStartApplication();
       return;
     }
     console.warn(`Saved PostgreSQL connection is unavailable: ${result.error}`);

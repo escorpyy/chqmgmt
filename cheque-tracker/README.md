@@ -52,7 +52,9 @@ The screen can scan common local PostgreSQL ports, test host/port/database/
 username/password, apply committed Prisma migrations and manual safety
 constraints, save a local configuration, and then continue to the normal login
 screen. If `DATABASE_URL` and `SESSION_SECRET` are already present in `.env`,
-the application starts directly.
+the application skips the form, but still verifies the connection and applies
+pending Prisma migrations and repeat-safe manual safety constraints before
+starting.
 
 For a first local setup, make sure the target database exists, for example:
 
