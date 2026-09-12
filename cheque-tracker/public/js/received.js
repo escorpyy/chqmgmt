@@ -64,12 +64,16 @@ export async function loadReceived(page = receivedPage) {
   const fiscalYearId = document.getElementById('received-fy-filter').value;
   const dateFrom = document.getElementById('received-date-from').value;
   const dateTo = document.getElementById('received-date-to').value;
+  const amountMin = document.getElementById('received-amount-min').value;
+  const amountMax = document.getElementById('received-amount-max').value;
   const params = new URLSearchParams();
   if (search) params.set('search', search);
   if (status) params.set('status', status);
   if (fiscalYearId) params.set('fiscalYearId', fiscalYearId);
   if (dateFrom) params.set('dateFrom', dateFrom);
   if (dateTo) params.set('dateTo', dateTo);
+  if (amountMin) params.set('amountMin', amountMin);
+  if (amountMax) params.set('amountMax', amountMax);
   params.set('sort', `${receivedSort.field}:${receivedSort.dir}`);
   params.set('page', page);
   params.set('pageSize', PAGE_SIZE);
@@ -157,17 +161,21 @@ document.getElementById('received-status-filter').addEventListener('change', () 
 document.getElementById('received-fy-filter').addEventListener('change', () => loadReceived(1));
 document.getElementById('received-date-from').addEventListener('change', () => loadReceived(1));
 document.getElementById('received-date-to').addEventListener('change', () => loadReceived(1));
+document.getElementById('received-amount-min').addEventListener('input', debounce(() => loadReceived(1), 300));
+document.getElementById('received-amount-max').addEventListener('input', debounce(() => loadReceived(1), 300));
 
 document.getElementById('btn-received-clear-filters').addEventListener('click', () => {
   document.getElementById('received-search').value = '';
   document.getElementById('received-status-filter').value = '';
   document.getElementById('received-fy-filter').value = '';
+  document.getElementById('received-amount-min').value = '';
+  document.getElementById('received-amount-max').value = '';
   const dateFrom = document.getElementById('received-date-from');
   const dateTo = document.getElementById('received-date-to');
   dateFrom.value = '';
   dateTo.value = '';
   // Setting .value directly doesn't fire 'change', so nudge the BS pickers
-  // (wired in main.js on boot) to clear their year/month/day selects too.
+  // (wired in main.js on boot) to clear their displayed date too.
   syncBsDatePicker(dateFrom);
   syncBsDatePicker(dateTo);
   receivedSort = { ...DEFAULT_RECEIVED_SORT };

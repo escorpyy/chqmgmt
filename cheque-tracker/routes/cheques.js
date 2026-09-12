@@ -29,11 +29,24 @@ const chequeInclude = {
 // "field:asc|desc" for chqDate, amount, or chqNo (defaults to chqDate desc).
 // dateFrom/dateTo filter on chqDate (inclusive), either end optional.
 router.get('/', asyncHandler(async (req, res) => {
-  const { status, search, includeDeleted, sort, fiscalYearId, dateFrom, dateTo } = req.query;
+  const { status, search, includeDeleted, sort, fiscalYearId, dateFrom, dateTo, amountMin, amountMax } = req.query;
   const { page, pageSize, skip, take } = parsePagination(req.query);
 
   const parsedFrom = parseDateOrNull(dateFrom);
   const parsedTo = parseDateOrNull(dateTo);
+  const parsedAmountMin = amountMin !== undefined && amountMin !== '' && !isNaN(Number(amountMin)) ? Number(amountMin) : null;
+  const parsedAmountMax = amountMax !== undefined && amountMax !== '' && !isNaN(Number(amountMax)) ? Number(amountMax) : null;
+
+  // The free-text search box also doubles as a plain-number lookup (exact
+  // amount match — Prisma can't ILIKE-substring-match a numeric column
+  // without a raw query) and a status lookup (so typing "follow" or
+  // "on check" finds FOLLOWUP / ON_CHECK cheques the same way it finds any
+  // other column).
+  const trimmedSearch = search ? String(search).trim() : '';
+  const numericSearch = trimmedSearch !== '' && !isNaN(Number(trimmedSearch)) ? Number(trimmedSearch) : null;
+  const matchedStatuses = trimmedSearch
+    ? CHEQUE_STATUSES.filter((s) => s.replace(/_/g, ' ').toLowerCase().includes(trimmedSearch.toLowerCase()))
+    : [];
 
   const where = {
     ...companyWhere(req),
@@ -42,6 +55,9 @@ router.get('/', asyncHandler(async (req, res) => {
     ...(fiscalYearId ? { fiscalYearId } : {}),
     ...((parsedFrom || parsedTo)
       ? { chqDate: { ...(parsedFrom ? { gte: parsedFrom } : {}), ...(parsedTo ? { lte: parsedTo } : {}) } }
+      : {}),
+    ...((parsedAmountMin !== null || parsedAmountMax !== null)
+      ? { amount: { ...(parsedAmountMin !== null ? { gte: parsedAmountMin } : {}), ...(parsedAmountMax !== null ? { lte: parsedAmountMax } : {}) } }
       : {}),
     ...(search
       ? {
@@ -54,16 +70,19 @@ router.get('/', asyncHandler(async (req, res) => {
             { issuer: { name: { contains: search, mode: 'insensitive' } } },
             { bank: { name: { contains: search, mode: 'insensitive' } } },
             { bank: { branch: { contains: search, mode: 'insensitive' } } },
+            ...(numericSearch !== null ? [{ amount: numericSearch }] : []),
+            ...(matchedStatuses.length ? [{ status: { in: matchedStatuses } }] : []),
           ],
         }
       : {}),
   };
-  // Every text column actually shown in the register is searchable above
-  // (cheque no, ref no, receipt no, account no, payee-on-cheque, issuer
-  // name, bank name/branch). Amount, status and the date columns are left
-  // out of free-text search on purpose — those are numeric/enum/date
-  // values, better filtered via the dedicated status/date-range/FY filters
-  // than matched as substrings.
+  // Every column actually shown in the register is now searchable: the text
+  // columns above via substring match, amount via exact-value match (typing
+  // "1500" finds a 1500.00 cheque — not a substring match, since Prisma has
+  // no ILIKE-on-numeric without a raw query), and status via a normalized
+  // substring match against the enum ("follow" -> FOLLOWUP, "on check" ->
+  // ON_CHECK). Use the dedicated amount-range and date-range filters for
+  // "between X and Y" style amount/date queries instead of free text.
   const orderBy = parseSort(sort, [
     'chqDate', 'amount', 'chqNo', 'status', 'statusDate', 'totalDays',
     'receiptNo', 'refNo', 'accountNo', 'issuer.name', 'bank.name',

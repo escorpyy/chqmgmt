@@ -363,7 +363,8 @@ main:has(#panel-issued.active) {
   max-width: 240px;
 }
 .received-filters select#received-status-filter { flex: 0 0 auto; }
-.date-range-filter {
+.date-range-filter,
+.amount-range-filter {
   display: flex;
   align-items: center;
   gap: 0.3rem;
@@ -381,25 +382,48 @@ main:has(#panel-issued.active) {
   outline-offset: 1px;
   border-color: var(--brand);
 }
-/* The BS picker (bsDatePicker.js) is built for spacious create/edit forms —
-   full-width year/month/day selects, a "Today" shortcut, an AD hint line.
-   In this filter strip it only needs to be a compact BS range picker, so
-   shrink the controls and drop "Today" (a filter range rarely needs it) to
-   keep the whole strip on one line. */
-.received-filters .bs-date-field {
-  gap: 0.2rem;
+.amount-range-filter input[type="number"] {
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raise);
+  color: var(--ink);
+  width: 5.4rem;
 }
-.received-filters .bs-date-select {
-  font-size: 0.72rem;
-  padding: 0.2rem 0.3rem;
+/* The BS picker (bsDatePicker.js) defaults to three year/month/day selects
+   plus a "Today" shortcut, built for spacious create/edit forms. This
+   filter's date-range inputs opt into the picker's single dd/mm/yyyy text
+   mode instead (data-bs-mode="text" in index.html), so all it needs here is
+   a small width and the same look as the row's other controls. */
+.received-filters .bs-date-field-text {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
 }
-.received-filters .bs-date-select.bs-date-year { flex-basis: 4.2rem; }
-.received-filters .bs-date-select.bs-date-month { flex-basis: 5rem; }
-.received-filters .bs-date-select.bs-date-day { flex-basis: 3rem; }
-.received-filters .bs-date-today { display: none; }
+.received-filters .bs-date-text-input {
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-raise);
+  color: var(--ink);
+  width: 6.4rem;
+}
+.received-filters .bs-date-text-input:focus {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+  border-color: var(--brand);
+}
+.received-filters .bs-date-text-input.invalid {
+  border-color: #B3413E;
+}
 .received-filters .bs-date-hint {
-  flex-basis: auto;
   font-size: 0.68rem;
+  color: var(--ink-faint);
+  white-space: nowrap;
 }
 .received-table-wrap {
   flex: 1 1 auto;

@@ -7,8 +7,14 @@
 // (still carries the real `name` attribute the app's forms read via
 // `new FormData(form)`, and still stores/validates an AD ISO value — so
 // every existing submit handler, API call, and date calculation elsewhere
-// in the app is untouched), but hides its native calendar UI and replaces
-// it with three BS year/month/day <select>s plus a small AD cross-reference.
+// in the app is untouched), but hides its native calendar UI and replaces it
+// with a BS-first picker.
+//
+// Two picker modes, chosen per-input:
+//  - default: three year/month/day <select>s plus a small AD cross-reference
+//    (spacious, used on create/edit forms throughout the app).
+//  - `data-bs-mode="text"`: a single dd/mm/yyyy (BS) text input — opt-in,
+//    for places like a compact filter strip where three selects don't fit.
 //
 // The native input stays in the DOM (not display:none, not type="hidden")
 // specifically so HTML5 "required" constraint validation keeps working —
@@ -27,16 +33,43 @@ function fmtAdShort(isoDate) {
   return `${d}/${m}/${y}`;
 }
 
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+/** "17/05/2083" for a { year, month (0-based), day } BS triple. */
+function fmtBsSlash(bs) {
+  return `${pad2(bs.day)}/${pad2(bs.month + 1)}/${bs.year}`;
+}
+
+/**
+ * Parse a typed "dd/mm/yyyy" (BS) string into { year, month, day } (month
+ * 0-based), or null if it isn't well-formed or isn't a real BS date.
+ */
+function parseBsSlash(text) {
+  const m = String(text).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) return null;
+  const day = Number(m[1]);
+  const month = Number(m[2]) - 1;
+  const year = Number(m[3]);
+  const max = daysInBsMonth(year, month);
+  if (!max || day < 1 || day > max) return null;
+  return { year, month, day };
+}
+
 /**
  * Wire a BS-first picker onto every not-yet-wired <input type="date">
  * found inside `root`. Safe to call repeatedly (e.g. every time a modal or
  * drawer is opened) — already-wired inputs are skipped.
  */
 export function initBsDatePickers(root = document) {
-  root.querySelectorAll('input[type="date"]:not([data-bs-wired])').forEach(wireOne);
+  root.querySelectorAll('input[type="date"]:not([data-bs-wired])').forEach((el) => {
+    if (el.dataset.bsMode === 'text') wireOneText(el);
+    else wireOne(el);
+  });
 }
 
-/** Re-sync a single picker's BS selects from its native input's current AD value. */
+/** Re-sync a single picker's BS input(s) from its native input's current AD value. */
 export function syncBsDatePicker(nativeInput) {
   nativeInput?._bsSync?.();
 }
@@ -148,6 +181,87 @@ function wireOne(nativeInput) {
   // Exposed so callers that set `nativeInput.value` programmatically (which
   // doesn't fire 'change') can ask the picker to refresh — e.g. a "default
   // to today" date field.
+  nativeInput._bsSync = syncFromNative;
+  syncFromNative();
+}
+
+/**
+ * Single dd/mm/yyyy (BS) text-input variant — same native-input-as-source-
+ * of-truth contract as wireOne() above, just a single field instead of
+ * three selects. Opt in per-input with data-bs-mode="text".
+ */
+function wireOneText(nativeInput) {
+  nativeInput.dataset.bsWired = '1';
+  nativeInput.classList.add('bs-native-date');
+  nativeInput.tabIndex = -1; // the text input below is the real interactive control
+
+  const wrap = document.createElement('div');
+  wrap.className = 'bs-date-field-text';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'bs-date-text-input';
+  input.placeholder = 'dd/mm/yyyy';
+  input.inputMode = 'numeric';
+  input.autocomplete = 'off';
+  input.setAttribute('aria-label', nativeInput.title || 'Date (BS, dd/mm/yyyy)');
+
+  const adHint = document.createElement('span');
+  adHint.className = 'bs-date-hint';
+
+  wrap.append(input, adHint);
+  nativeInput.insertAdjacentElement('afterend', wrap);
+
+  function commitFromText() {
+    const typed = input.value.trim();
+    if (typed === '') {
+      nativeInput.value = '';
+      adHint.textContent = '';
+      input.classList.remove('invalid');
+    } else {
+      const bs = parseBsSlash(typed);
+      const ad = bs && bsToAd(bs.year, bs.month, bs.day);
+      if (ad) {
+        const iso = ad.toISOString().slice(0, 10);
+        nativeInput.value = iso;
+        adHint.textContent = `(${fmtAdShort(iso)})`;
+        input.classList.remove('invalid');
+      } else {
+        // Unparseable or out-of-range — leave the underlying date alone
+        // (so a bad keystroke mid-edit doesn't silently wipe a valid
+        // filter) but flag the field so it's visibly not applied yet.
+        input.classList.add('invalid');
+        return;
+      }
+    }
+    nativeInput.dispatchEvent(new Event('input', { bubbles: true }));
+    nativeInput.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  input.addEventListener('change', commitFromText);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commitFromText(); input.blur(); }
+  });
+
+  function syncFromNative() {
+    const val = nativeInput.value;
+    input.classList.remove('invalid');
+    if (!val) {
+      input.value = '';
+      adHint.textContent = '';
+      return;
+    }
+    const bs = adToBs(val);
+    if (!bs) {
+      // Outside the supported BS 2000–2090 range — fall back to AD only.
+      input.value = '';
+      adHint.textContent = fmtAdShort(val);
+      return;
+    }
+    input.value = fmtBsSlash(bs);
+    adHint.textContent = `(${fmtAdShort(val)})`;
+  }
+
   nativeInput._bsSync = syncFromNative;
   syncFromNative();
 }
