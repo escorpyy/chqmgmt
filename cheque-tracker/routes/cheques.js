@@ -13,7 +13,7 @@ const router = Router();
 
 const chequeInclude = {
   fiscalYear: true,
-  issuer: true,
+  issuer: { include: { firm: true } },
   bank: true,
   presentedBank: true,
   staff: true,
@@ -108,7 +108,7 @@ router.get('/', asyncHandler(async (req, res) => {
   const [cheques, total] = await Promise.all([
     prisma.cheque.findMany({
       where,
-      include: { fiscalYear: true, issuer: true, bank: true, presentedBank: true, staff: true },
+      include: { fiscalYear: true, issuer: { include: { firm: true } }, bank: true, presentedBank: true, staff: true },
       orderBy,
       skip,
       take,

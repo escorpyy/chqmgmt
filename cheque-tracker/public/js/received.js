@@ -111,6 +111,9 @@ function renderReceivedTable(cheques, total, page) {
             <td class="num">${fmtDateStacked(c.chqDate)}</td>
             <td>
               <div>${escapeHtml(c.issuer?.name || '—')}</div>
+              ${c.issuer?.type === 'INDIVIDUAL' && c.issuer?.firm
+                ? `<div class="muted cell-sub">${escapeHtml(c.issuer.firm.name)}</div>`
+                : ''}
               <div class="muted cell-sub">${escapeHtml(c.receiptNo || '—')} · Ref: ${escapeHtml(c.refNo || '—')}</div>
             </td>
             <td>
