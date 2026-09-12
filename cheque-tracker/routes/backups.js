@@ -30,9 +30,13 @@ router.patch('/settings', asyncHandler(async (req, res) => {
 }));
 
 router.post('/', asyncHandler(async (req, res) => {
-  const backup = await createBackup('manual');
-  await enforceRetention();
-  res.status(201).json({ name: backup.name, size: backup.size, createdAt: backup.createdAt });
+  try {
+    const backup = await createBackup('manual');
+    await enforceRetention();
+    res.status(201).json({ name: backup.name, size: backup.size, createdAt: backup.createdAt });
+  } catch (err) {
+    res.status(503).json({ error: err.message });
+  }
 }));
 
 router.get('/:name/download', asyncHandler(async (req, res) => {
@@ -46,9 +50,13 @@ router.post('/restore', upload.single('backup'), asyncHandler(async (req, res) =
   if (!req.file) return res.status(400).json({ error: 'A backup file is required.' });
 
   // Preserve the current database before the destructive restore operation.
-  await createBackup('pre-restore');
-  await restoreUploadedBackup(req.file.path);
-  res.json({ ok: true, message: 'Database restored. Sign out and sign back in.' });
+  try {
+    await createBackup('pre-restore');
+    await restoreUploadedBackup(req.file.path);
+    res.json({ ok: true, message: 'Database restored. Sign out and sign back in.' });
+  } catch (err) {
+    res.status(503).json({ error: err.message });
+  }
 }));
 
 export default router;

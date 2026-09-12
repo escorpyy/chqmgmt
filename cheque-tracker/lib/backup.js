@@ -34,7 +34,12 @@ function runTool(command, args, label) {
     let stderr = '';
     child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
     child.stdout.resume();
-    child.on('error', (err) => reject(new Error(`${label} could not start: ${err.message}`)));
+    child.on('error', (err) => {
+      if (err.code === 'ENOENT') {
+        return reject(new Error(`${label} requires the PostgreSQL client tools (pg_dump/pg_restore) to be installed and available on PATH.`));
+      }
+      reject(new Error(`${label} could not start: ${err.message}`));
+    });
     child.on('close', (code) => {
       if (code === 0) return resolve();
       reject(new Error(`${label} failed${stderr.trim() ? `: ${redact(stderr.trim())}` : '.'}`));
