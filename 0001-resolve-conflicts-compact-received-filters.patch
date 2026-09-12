@@ -1,0 +1,411 @@
+From 1d4570b1f1d8de604a567bed08fb755060a1fdb6 Mon Sep 17 00:00:00 2001
+From: Nick <nick@rudrabiz.dev>
+Date: Fri, 11 Sep 2026 14:58:25 +0000
+Subject: [PATCH] Resolve merge conflicts; make received-cheques filter strip a
+ single compact line
+
+- public/index.html, style.css, public/js/received.js, routes/cheques.js had
+  unresolved <<<<<<< ours/======/>>>>>>> theirs markers checked into HEAD.
+  Resolved in favor of the 'theirs' side throughout (sortable columns,
+  date-range filter, compact filter-strip layout) - it was the more complete
+  and mutually consistent branch across all four files.
+- Flattened the received-cheques filter bar from a two-row layout into one
+  flat line, smaller type/padding, so it reads as a hairline of chrome and
+  the table gets essentially all of the panel's height.
+- Added a sticky table header for the received-cheques ledger while scrolling.
+- No changes to table columns, row markup, cell content, or JS logic beyond
+  the conflict resolution itself.
+---
+ cheque-tracker/public/index.html     |  73 +++++-----------
+ cheque-tracker/public/js/received.js |  21 -----
+ cheque-tracker/public/style.css      | 124 ++++++++++-----------------
+ cheque-tracker/routes/cheques.js     |   7 --
+ 4 files changed, 66 insertions(+), 159 deletions(-)
+
+diff --git a/cheque-tracker/public/index.html b/cheque-tracker/public/index.html
+index 5e3bb2a..6f2e439 100644
+--- a/cheque-tracker/public/index.html
++++ b/cheque-tracker/public/index.html
+@@ -67,65 +67,38 @@
+       <h2>Received cheques</h2>
+       <button class="btn btn-primary" id="btn-new-cheque">+ New cheque</button>
+     </div>
+-<<<<<<< ours
+-    <div class="fy-filter-bar">
+-      <label for="received-fy-filter">Fiscal year</label>
+-      <select id="received-fy-filter" class="fy-select">
+-        <option value="">All fiscal years</option>
+-      </select>
+-    </div>
+-    <div class="toolbar">
+-      <input type="search" id="received-search" placeholder="Search cheque no, ref no, issuer…">
+-      <select id="received-status-filter">
+-        <option value="">All statuses</option>
+-        <option value="PENDING">Pending</option>
+-        <option value="DEPOSITED">Deposited</option>
+-        <option value="FOLLOWUP">Follow-up</option>
+-        <option value="ON_CHECK">On check</option>
+-        <option value="PRESENTED">Presented</option>
+-        <option value="CLEARED">Cleared</option>
+-        <option value="RETURNED">Returned</option>
+-        <option value="CANCELLED">Cancelled</option>
+-      </select>
+-=======
+ 
+     <div class="received-layout">
+-      <!-- Compact filter strip — search+status on the left, date-range
+-           and fiscal-year filters stacked on the right. This row is meant
+-           to stay small so the table below gets the bulk of the panel. -->
++      <!-- Compact filter strip — one flat line (~2% of the panel); the
++           table below gets essentially all of the remaining height. -->
+       <div class="received-filters">
+-        <div class="filters-left">
+-          <input type="search" id="received-search" placeholder="Search cheque no, ref no, issuer…">
+-          <select id="received-status-filter">
+-            <option value="">All statuses</option>
+-            <option value="PENDING">Pending</option>
+-            <option value="DEPOSITED">Deposited</option>
+-            <option value="FOLLOWUP">Follow-up</option>
+-            <option value="ON_CHECK">On check</option>
+-            <option value="PRESENTED">Presented</option>
+-            <option value="CLEARED">Cleared</option>
+-            <option value="RETURNED">Returned</option>
+-            <option value="CANCELLED">Cancelled</option>
+-          </select>
+-        </div>
+-        <div class="filters-right">
+-          <div class="date-range-filter">
+-            <label for="received-date-from" class="sr-only">From</label>
+-            <input type="date" id="received-date-from" title="Cheque date from">
+-            <span class="date-range-sep">to</span>
+-            <label for="received-date-to" class="sr-only">To</label>
+-            <input type="date" id="received-date-to" title="Cheque date to">
+-          </div>
+-          <select id="received-fy-filter" class="fy-select">
+-            <option value="">All fiscal years</option>
+-          </select>
++        <input type="search" id="received-search" placeholder="Search cheque no, ref no, issuer…">
++        <select id="received-status-filter">
++          <option value="">All statuses</option>
++          <option value="PENDING">Pending</option>
++          <option value="DEPOSITED">Deposited</option>
++          <option value="FOLLOWUP">Follow-up</option>
++          <option value="ON_CHECK">On check</option>
++          <option value="PRESENTED">Presented</option>
++          <option value="CLEARED">Cleared</option>
++          <option value="RETURNED">Returned</option>
++          <option value="CANCELLED">Cancelled</option>
++        </select>
++        <div class="date-range-filter">
++          <label for="received-date-from" class="sr-only">From</label>
++          <input type="date" id="received-date-from" title="Cheque date from">
++          <span class="date-range-sep">to</span>
++          <label for="received-date-to" class="sr-only">To</label>
++          <input type="date" id="received-date-to" title="Cheque date to">
+         </div>
++        <select id="received-fy-filter" class="fy-select">
++          <option value="">All fiscal years</option>
++        </select>
+       </div>
+ 
+       <div class="received-table-wrap">
+         <div id="received-table"></div>
+       </div>
+->>>>>>> theirs
+     </div>
+   </section>
+ 
+diff --git a/cheque-tracker/public/js/received.js b/cheque-tracker/public/js/received.js
+index 737df16..6d62d7e 100644
+--- a/cheque-tracker/public/js/received.js
++++ b/cheque-tracker/public/js/received.js
+@@ -14,8 +14,6 @@ import { syncEditableSelect } from './combobox.js';
+ const PAGE_SIZE = 50;
+ let receivedPage = 1;
+ let fyFilterPopulated = false;
+-<<<<<<< ours
+-=======
+ let receivedSort = { field: 'chqDate', dir: 'desc' };
+ 
+ // Column definitions for the sortable headers — label plus the backend
+@@ -41,7 +39,6 @@ function sortableHeaderRow() {
+     return `<th class="sortable${active ? ' sort-active' : ''}" data-sort-field="${field}">${label}${arrow}</th>`;
+   }).join('');
+ }
+->>>>>>> theirs
+ 
+ // The fiscal-year filter is populated from state.fiscalYears, which is
+ // loaded once at startup (referenceData.js) — safe to rebuild every time
+@@ -63,21 +60,15 @@ export async function loadReceived(page = receivedPage) {
+   const search = document.getElementById('received-search').value;
+   const status = document.getElementById('received-status-filter').value;
+   const fiscalYearId = document.getElementById('received-fy-filter').value;
+-<<<<<<< ours
+-=======
+   const dateFrom = document.getElementById('received-date-from').value;
+   const dateTo = document.getElementById('received-date-to').value;
+->>>>>>> theirs
+   const params = new URLSearchParams();
+   if (search) params.set('search', search);
+   if (status) params.set('status', status);
+   if (fiscalYearId) params.set('fiscalYearId', fiscalYearId);
+-<<<<<<< ours
+-=======
+   if (dateFrom) params.set('dateFrom', dateFrom);
+   if (dateTo) params.set('dateTo', dateTo);
+   params.set('sort', `${receivedSort.field}:${receivedSort.dir}`);
+->>>>>>> theirs
+   params.set('page', page);
+   params.set('pageSize', PAGE_SIZE);
+ 
+@@ -98,16 +89,7 @@ function renderReceivedTable(cheques, total, page) {
+   }
+   el.innerHTML = `
+     <table class="ledger ledger-compact ledger-centered">
+-<<<<<<< ours
+-      <thead><tr>
+-        <th>Cheque no</th><th>Cheque date</th><th>Party / customer</th>
+-        <th>Bank name</th><th>Amount</th>
+-        <th>Status</th><th>Status date</th>
+-        <th>Days pending</th><th>Actions</th>
+-      </tr></thead>
+-=======
+       <thead><tr>${sortableHeaderRow()}</tr></thead>
+->>>>>>> theirs
+       <tbody>
+         ${cheques.map((c) => {
+           // Days pending = chqDate -> statusDate, in whole days. This is
+@@ -168,11 +150,8 @@ function renderReceivedTable(cheques, total, page) {
+ document.getElementById('received-search').addEventListener('input', debounce(() => loadReceived(1), 300));
+ document.getElementById('received-status-filter').addEventListener('change', () => loadReceived(1));
+ document.getElementById('received-fy-filter').addEventListener('change', () => loadReceived(1));
+-<<<<<<< ours
+-=======
+ document.getElementById('received-date-from').addEventListener('change', () => loadReceived(1));
+ document.getElementById('received-date-to').addEventListener('change', () => loadReceived(1));
+->>>>>>> theirs
+ 
+ document.getElementById('btn-new-cheque').addEventListener('click', () => openNewChequeModal());
+ 
+diff --git a/cheque-tracker/public/style.css b/cheque-tracker/public/style.css
+index 2750564..e652a1f 100644
+--- a/cheque-tracker/public/style.css
++++ b/cheque-tracker/public/style.css
+@@ -316,31 +316,11 @@ main:has(#panel-issued.active) {
+ }
+ .toolbar input[type="search"] { flex: 1; max-width: 320px; }
+ 
+-<<<<<<< ours
+-/* Fiscal-year filter — deliberately styled bigger/heavier than the toolbar
+-   filters below it, since FY is the primary top-level split for a register
+-   (everything else is a secondary refinement within a year). */
+-.fy-filter-bar {
+-  display: flex;
+-  align-items: center;
+-  gap: 0.6rem;
+-  margin-bottom: 0.85rem;
+-}
+-.fy-filter-bar label {
+-  font-size: 0.8rem;
+-  font-weight: 600;
+-  color: var(--ink-soft);
+-}
+-.fy-filter-bar .fy-select {
+-  font-family: var(--font-body);
+-  font-size: 0.95rem;
+-  font-weight: 600;
+-  padding: 0.55rem 0.9rem;
+-=======
+-/* Received cheques — filter strip stays a thin band, table gets the rest
+-   of the panel's height. #panel-received gets a viewport-based height so
+-   there's an actual "rest of the height" for the table wrap to flex into;
+-   200px is masthead + tabs + panel-head, adjust here if that chrome grows. */
++/* Received cheques — filter strip is a single thin line (~2% of the panel);
++   the table wrap takes essentially everything else via flex. #panel-received
++   gets a viewport-based height so there's an actual "rest of the height" for
++   the table to flex into; 200px is masthead + tabs + panel-head, adjust here
++   if that chrome grows. */
+ #panel-received.active {
+   display: flex;
+   flex-direction: column;
+@@ -352,85 +332,71 @@ main:has(#panel-issued.active) {
+   flex-direction: column;
+   min-height: 0;
+ }
++/* One flat row — search, status, date range, fiscal year — all sized down
++   and packed tight so the strip reads as a hairline of chrome above the
++   ledger, not a second panel of its own. Wraps only if the window is
++   genuinely too narrow to hold it. */
+ .received-filters {
+   flex: 0 0 auto;
+   display: flex;
+-  align-items: flex-start;
+-  justify-content: space-between;
+-  gap: 1.5rem;
+-  padding-bottom: 0.75rem;
+-  margin-bottom: 0.75rem;
+-  border-bottom: 1px solid var(--line);
+-}
+-.filters-left {
+-  display: flex;
++  flex-wrap: wrap;
+   align-items: center;
+-  gap: 0.6rem;
+-  flex: 1 1 auto;
++  gap: 0.45rem;
++  padding-bottom: 0.4rem;
++  margin-bottom: 0.4rem;
++  border-bottom: 1px solid var(--line);
+ }
+-.filters-left input[type="search"],
+-.filters-left select {
++.received-filters input[type="search"],
++.received-filters select,
++.received-filters input[type="date"] {
+   font-family: var(--font-body);
+-  font-size: 0.85rem;
+-  padding: 0.5rem 0.7rem;
++  font-size: 0.78rem;
++  padding: 0.3rem 0.5rem;
+   border: 1px solid var(--line);
+   border-radius: var(--radius);
+   background: var(--surface-raise);
+   color: var(--ink);
++  line-height: 1.3;
+ }
+-.filters-left input[type="search"] { flex: 1; max-width: 320px; }
+-.filters-right {
+-  display: flex;
+-  flex-direction: column;
+-  align-items: flex-end;
+-  gap: 0.5rem;
+-  flex: 0 0 auto;
++.received-filters input[type="search"] {
++  flex: 1 1 auto;
++  min-width: 140px;
++  max-width: 240px;
+ }
++.received-filters select#received-status-filter { flex: 0 0 auto; }
+ .date-range-filter {
+   display: flex;
+   align-items: center;
+-  gap: 0.4rem;
+-}
+-.date-range-filter input[type="date"] {
+-  font-family: var(--font-body);
+-  font-size: 0.82rem;
+-  padding: 0.4rem 0.55rem;
+-  border: 1px solid var(--line);
+-  border-radius: var(--radius);
+-  background: var(--surface-raise);
+-  color: var(--ink);
++  gap: 0.3rem;
++  flex: 0 0 auto;
+ }
+-.date-range-sep { font-size: 0.78rem; color: var(--ink-soft); }
++.date-range-filter input[type="date"] { width: 9.5rem; }
++.date-range-sep { font-size: 0.72rem; color: var(--ink-faint); }
+ .received-filters .fy-select {
+-  font-family: var(--font-body);
+-  font-size: 0.85rem;
+   font-weight: 600;
+-  padding: 0.4rem 0.7rem;
+->>>>>>> theirs
+-  border: 1px solid var(--ink);
+-  border-radius: var(--radius);
+-  background: var(--surface-raise);
+-  color: var(--ink);
+-<<<<<<< ours
+-  min-width: 220px;
+-}
+-.fy-filter-bar .fy-select:focus {
+-  outline: 2px solid var(--brand);
+-  outline-offset: 1px;
+-}
+-=======
+-  min-width: 200px;
++  min-width: 0;
++  flex: 0 0 auto;
+ }
+-.received-filters .fy-select:focus,
+-.date-range-filter input:focus {
++.received-filters input:focus,
++.received-filters select:focus {
+   outline: 2px solid var(--brand);
+   outline-offset: 1px;
++  border-color: var(--brand);
+ }
+ .received-table-wrap {
+   flex: 1 1 auto;
+   min-height: 0;
+   overflow-y: auto;
+ }
++/* Header stays visible while the ledger scrolls within its 98%-of-panel
++   space — purely a positioning change, the table's own markup and cell
++   styling are untouched. */
++.received-table-wrap table.ledger thead th {
++  position: sticky;
++  top: 0;
++  background: var(--surface);
++  z-index: 1;
++}
+ .sr-only {
+   position: absolute;
+   width: 1px;
+@@ -442,7 +408,6 @@ main:has(#panel-issued.active) {
+   white-space: nowrap;
+   border: 0;
+ }
+->>>>>>> theirs
+ .checkbox-field {
+   display: flex;
+   align-items: center;
+@@ -519,8 +484,6 @@ table.ledger.ledger-centered .cell-sub {
+   font-size: 0.74rem;
+   margin-top: 0.15rem;
+ }
+-<<<<<<< ours
+-=======
+ table.ledger.ledger-centered th.sortable {
+   cursor: pointer;
+   user-select: none;
+@@ -528,7 +491,6 @@ table.ledger.ledger-centered th.sortable {
+ }
+ table.ledger.ledger-centered th.sortable:hover { color: var(--ink); background: var(--brand-tint); }
+ table.ledger.ledger-centered th.sort-active { color: var(--brand-dark); }
+->>>>>>> theirs
+ 
+ .pagination {
+   display: flex;
+diff --git a/cheque-tracker/routes/cheques.js b/cheque-tracker/routes/cheques.js
+index e6f9a40..ddde54d 100644
+--- a/cheque-tracker/routes/cheques.js
++++ b/cheque-tracker/routes/cheques.js
+@@ -29,11 +29,7 @@ const chequeInclude = {
+ // "field:asc|desc" for chqDate, amount, or chqNo (defaults to chqDate desc).
+ // dateFrom/dateTo filter on chqDate (inclusive), either end optional.
+ router.get('/', asyncHandler(async (req, res) => {
+-<<<<<<< ours
+-  const { status, search, includeDeleted, sort, fiscalYearId } = req.query;
+-=======
+   const { status, search, includeDeleted, sort, fiscalYearId, dateFrom, dateTo } = req.query;
+->>>>>>> theirs
+   const { page, pageSize, skip, take } = parsePagination(req.query);
+ 
+   const parsedFrom = parseDateOrNull(dateFrom);
+@@ -44,12 +40,9 @@ router.get('/', asyncHandler(async (req, res) => {
+     ...(includeDeleted === 'true' ? {} : { deletedAt: null }),
+     ...statusWhereFragment(status, CHEQUE_STATUSES),
+     ...(fiscalYearId ? { fiscalYearId } : {}),
+-<<<<<<< ours
+-=======
+     ...((parsedFrom || parsedTo)
+       ? { chqDate: { ...(parsedFrom ? { gte: parsedFrom } : {}), ...(parsedTo ? { lte: parsedTo } : {}) } }
+       : {}),
+->>>>>>> theirs
+     ...(search
+       ? {
+           OR: [
+-- 
+2.43.0
+

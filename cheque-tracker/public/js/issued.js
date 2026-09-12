@@ -3,7 +3,7 @@ import { toast } from './toast.js';
 import { state } from './state.js';
 import { openModal, closeModal, formError, clearFormError, openConfirmModal } from './modal.js';
 import { openDrawer, closeDrawer } from './drawer.js';
-import { escapeHtml, fmtDate, fmtDateStacked, fmtMoney, fmtDateInput, humanize, statusTag, selectOptions, enumOptions, debounce, daysSince, ageTag, paginationControls, wirePaginationControls } from './utils.js';
+import { escapeHtml, fmtDate, fmtDateStacked, fmtMoney, fmtDateInput, humanize, statusTag, selectOptions, enumOptions, debounce, ageTag, paginationControls, wirePaginationControls } from './utils.js';
 import { ISSUED_STATUSES, ISSUED_FOLLOWUP_RESPONSES, RETURN_REASONS, PAYMENT_METHODS, CLEARANCE_METHODS, PARTY_TYPES } from './constants.js';
 import { loadDashboard } from './dashboard.js';
 import { syncEditableSelect } from './combobox.js';
@@ -39,32 +39,34 @@ function renderIssuedTable(cheques, total, page) {
     return;
   }
   el.innerHTML = `
-    <table class="ledger ledger-compact">
+    <table class="ledger ledger-compact ledger-centered">
       <thead><tr>
-        <th>Cheque no</th><th>Cheque date</th><th>Issue date</th><th>Payee / vendor</th>
-        <th>Bank name</th><th>Branch</th><th>Account no.</th><th>Amount</th>
-        <th>Payment purpose</th><th>Clearance date</th><th>Status</th><th>Status date</th>
+        <th>Cheque no</th><th>Cheque date</th><th>Payee / vendor</th>
+        <th>Bank name</th><th>Amount</th>
+        <th>Status</th><th>Status date</th>
         <th>Days outstanding</th><th>Actions</th>
       </tr></thead>
       <tbody>
         ${cheques.map((c) => {
-          // "Days outstanding" tracks how long a cheque has sat in its
-          // current status. For a cleared cheque that's a fixed, historical
-          // span (totalDays, computed once at clearance); for anything
-          // still in play it's live — days since the last status change.
-          const ageDays = c.status === 'CLEARED' ? c.totalDays : daysSince(c.statusDate);
+          // Days outstanding = chqDate -> statusDate, in whole days
+          // (c.totalDays, computed server-side and refreshed on every
+          // status change — see lib/chequeHelpers.js). Using this
+          // consistently for every status, not just CLEARED, so the
+          // number means the same thing throughout the register.
+          const ageDays = c.totalDays;
           return `
           <tr data-id="${c.id}">
             <td class="num">${escapeHtml(c.chqNo)}</td>
             <td class="num">${fmtDateStacked(c.chqDate)}</td>
-            <td class="num">${fmtDateStacked(c.createdAt)}</td>
-            <td>${escapeHtml(c.payeeName)}</td>
-            <td>${escapeHtml(c.companyBankAccount?.bank?.name || '—')}</td>
-            <td>${escapeHtml(c.companyBankAccount?.bank?.branch || '—')}</td>
-            <td class="num">${escapeHtml(c.companyBankAccount?.accountNumber || '—')}</td>
+            <td>
+              <div>${escapeHtml(c.payeeName)}</div>
+              <div class="muted cell-sub cell-truncate" title="${escapeHtml(c.purpose || '')}">${escapeHtml(c.purpose || '—')}</div>
+            </td>
+            <td>
+              <div>${escapeHtml(c.companyBankAccount?.bank?.name || '—')}</div>
+              <div class="muted cell-sub">${escapeHtml(c.companyBankAccount?.bank?.branch || '—')} · A/C: ${escapeHtml(c.companyBankAccount?.accountNumber || '—')}</div>
+            </td>
             <td class="amount">${fmtMoney(c.amount)}</td>
-            <td class="cell-truncate" title="${escapeHtml(c.purpose || '')}">${escapeHtml(c.purpose || '—')}</td>
-            <td class="num">${fmtDateStacked(c.clearedAt)}</td>
             <td>${statusTag(c.status)}</td>
             <td class="num">${fmtDateStacked(c.statusDate)}</td>
             <td>${ageTag(ageDays)}</td>
@@ -174,6 +176,38 @@ async function openIssuedDetail(id) {
   }
 }
 
+// Log of "what happened when" for the drawer's Status history section.
+// Mirrors received.js's renderStatusHistory, but there's no depositedAt
+// here — issuedStageTimestampFields (lib/chequeHelpers.js) never sets one
+// for issued cheques, since we don't deposit our own outgoing cheques.
+function renderIssuedStatusHistory(c) {
+  const stages = [
+    { label: 'Issued', date: c.createdAt },
+    { label: 'Presented', date: c.presentedAt },
+    { label: 'Cleared', date: c.clearedAt },
+    { label: 'Returned', date: c.bouncedAt },
+    { label: 'Stopped', date: c.cancelledAt },
+  ].filter((s) => s.date).sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  // FOLLOWUP/ON_CHECK don't stamp a dedicated stage column, so show the
+  // current status/statusDate explicitly in that case (same reasoning as
+  // the received-cheque version).
+  const currentIsUnstamped = !['PRESENTED', 'CLEARED', 'RETURNED', 'STOPPED'].includes(c.status);
+
+  if (!stages.length && !currentIsUnstamped) {
+    return `<p class="timeline-empty">No status changes recorded yet.</p>`;
+  }
+
+  return stages.map((s) => `
+    <div class="timeline-item">
+      <div class="ti-head"><span>${s.label}</span><span class="ti-meta">${fmtDate(s.date)}</span></div>
+    </div>`).join('') + (currentIsUnstamped ? `
+    <div class="timeline-item">
+      <div class="ti-head"><span>${humanize(c.status)}</span><span class="ti-meta">${fmtDate(c.statusDate)}</span></div>
+      ${c.previousStatus ? `<div class="ti-meta">Previously: ${humanize(c.previousStatus)}</div>` : ''}
+    </div>` : '');
+}
+
 function renderIssuedDrawer(c) {
   const canFollowUp = c.status === 'RETURNED';
   const canPay = !['CLEARED'].includes(c.status);
@@ -206,6 +240,11 @@ function renderIssuedDrawer(c) {
       ${c.replaces ? `<div class="detail-field"><dt>Replaces</dt><dd class="num">${escapeHtml(c.replaces.chqNo)}</dd></div>` : ''}
       ${c.replacedBy ? `<div class="detail-field"><dt>Replaced by</dt><dd class="num">${escapeHtml(c.replacedBy.chqNo)}</dd></div>` : ''}
     </dl>
+
+    <div class="section-title">Status history</div>
+    <div class="timeline">
+      ${renderIssuedStatusHistory(c)}
+    </div>
 
     <div class="action-row">
       <button class="btn btn-sm" data-action="status">Change status</button>

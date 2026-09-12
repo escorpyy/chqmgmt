@@ -29,11 +29,7 @@ const chequeInclude = {
 // "field:asc|desc" for chqDate, amount, or chqNo (defaults to chqDate desc).
 // dateFrom/dateTo filter on chqDate (inclusive), either end optional.
 router.get('/', asyncHandler(async (req, res) => {
-<<<<<<< ours
-  const { status, search, includeDeleted, sort, fiscalYearId } = req.query;
-=======
   const { status, search, includeDeleted, sort, fiscalYearId, dateFrom, dateTo } = req.query;
->>>>>>> theirs
   const { page, pageSize, skip, take } = parsePagination(req.query);
 
   const parsedFrom = parseDateOrNull(dateFrom);
@@ -44,12 +40,9 @@ router.get('/', asyncHandler(async (req, res) => {
     ...(includeDeleted === 'true' ? {} : { deletedAt: null }),
     ...statusWhereFragment(status, CHEQUE_STATUSES),
     ...(fiscalYearId ? { fiscalYearId } : {}),
-<<<<<<< ours
-=======
     ...((parsedFrom || parsedTo)
       ? { chqDate: { ...(parsedFrom ? { gte: parsedFrom } : {}), ...(parsedTo ? { lte: parsedTo } : {}) } }
       : {}),
->>>>>>> theirs
     ...(search
       ? {
           OR: [
