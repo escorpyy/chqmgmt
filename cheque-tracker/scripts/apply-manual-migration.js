@@ -1,6 +1,9 @@
 // Applies prisma/manual-migration-additions.sql directly against DATABASE_URL.
-// Run this after Prisma migrations. The statements are repeat-safe so the
-// bootstrap process can apply them on every startup and after a database reset.
+// Run this once after your first `npx prisma migrate dev`, and again any
+// time you reset the database. Safe to re-run: constraints/triggers use
+// ADD CONSTRAINT / CREATE OR REPLACE / DROP ... IF EXISTS patterns, but if
+// you run it twice without a reset you may see "constraint already exists"
+// errors for step 1-5 — that's expected and can be ignored.
 import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';

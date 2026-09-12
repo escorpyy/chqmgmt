@@ -13,26 +13,30 @@
 -- ----------------------------------------------------------------------------
 -- 1. Amounts must be positive
 -- ----------------------------------------------------------------------------
-DO $$ BEGIN ALTER TABLE "Cheque" ADD CONSTRAINT chk_cheque_amount_positive CHECK (amount > 0); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN ALTER TABLE "IssuedCheque" ADD CONSTRAINT chk_issuedcheque_amount_positive CHECK (amount > 0); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN ALTER TABLE "ChequePayment" ADD CONSTRAINT chk_chequepayment_amount_positive CHECK (amount > 0); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN ALTER TABLE "IssuedChequePayment" ADD CONSTRAINT chk_issuedpayment_amount_positive CHECK (amount > 0); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ALTER TABLE "Cheque"              ADD CONSTRAINT chk_cheque_amount_positive          CHECK (amount > 0);
+ALTER TABLE "IssuedCheque"        ADD CONSTRAINT chk_issuedcheque_amount_positive    CHECK (amount > 0);
+ALTER TABLE "ChequePayment"       ADD CONSTRAINT chk_chequepayment_amount_positive   CHECK (amount > 0);
+ALTER TABLE "IssuedChequePayment" ADD CONSTRAINT chk_issuedpayment_amount_positive   CHECK (amount > 0);
 
 
 -- ----------------------------------------------------------------------------
 -- 2. totalDays: never negative, and only meaningful once statusDate >= chqDate
 -- ----------------------------------------------------------------------------
-DO $$ BEGIN ALTER TABLE "Cheque" ADD CONSTRAINT chk_cheque_totaldays_valid CHECK ("totalDays" IS NULL OR ("totalDays" >= 0 AND "statusDate" >= "chqDate")); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ALTER TABLE "Cheque" ADD CONSTRAINT chk_cheque_totaldays_valid
+  CHECK ("totalDays" IS NULL OR ("totalDays" >= 0 AND "statusDate" >= "chqDate"));
 
-DO $$ BEGIN ALTER TABLE "IssuedCheque" ADD CONSTRAINT chk_issuedcheque_totaldays_valid CHECK ("totalDays" IS NULL OR ("totalDays" >= 0 AND "statusDate" >= "chqDate")); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ALTER TABLE "IssuedCheque" ADD CONSTRAINT chk_issuedcheque_totaldays_valid
+  CHECK ("totalDays" IS NULL OR ("totalDays" >= 0 AND "statusDate" >= "chqDate"));
 
 
 -- ----------------------------------------------------------------------------
 -- 3. A cheque can't replace itself
 -- ----------------------------------------------------------------------------
-DO $$ BEGIN ALTER TABLE "Cheque" ADD CONSTRAINT chk_cheque_no_self_replace CHECK ("replacesChequeId" IS NULL OR "replacesChequeId" != id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ALTER TABLE "Cheque" ADD CONSTRAINT chk_cheque_no_self_replace
+  CHECK ("replacesChequeId" IS NULL OR "replacesChequeId" != id);
 
-DO $$ BEGIN ALTER TABLE "IssuedCheque" ADD CONSTRAINT chk_issuedcheque_no_self_replace CHECK ("replacesChequeId" IS NULL OR "replacesChequeId" != id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ALTER TABLE "IssuedCheque" ADD CONSTRAINT chk_issuedcheque_no_self_replace
+  CHECK ("replacesChequeId" IS NULL OR "replacesChequeId" != id);
 
 
 -- ----------------------------------------------------------------------------
@@ -40,22 +44,28 @@ DO $$ BEGIN ALTER TABLE "IssuedCheque" ADD CONSTRAINT chk_issuedcheque_no_self_r
 --    - A FIRM-type party shouldn't itself belong to another firm
 --    - A party can't be its own firm
 -- ----------------------------------------------------------------------------
-DO $$ BEGIN ALTER TABLE "Party" ADD CONSTRAINT chk_party_firm_not_nested CHECK (type != 'FIRM' OR "firmId" IS NULL); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ALTER TABLE "Party" ADD CONSTRAINT chk_party_firm_not_nested
+  CHECK (type != 'FIRM' OR "firmId" IS NULL);
 
-DO $$ BEGIN ALTER TABLE "Party" ADD CONSTRAINT chk_party_not_own_firm CHECK ("firmId" IS NULL OR "firmId" != id); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ALTER TABLE "Party" ADD CONSTRAINT chk_party_not_own_firm
+  CHECK ("firmId" IS NULL OR "firmId" != id);
 
 
 -- ----------------------------------------------------------------------------
 -- 5. Follow-up / check-log date ordering
 --    (cross-field, single-row — CHECK constraints handle these fine)
 -- ----------------------------------------------------------------------------
-DO $$ BEGIN ALTER TABLE "ChequeFollowUp" ADD CONSTRAINT chk_followup_next_action_after CHECK ("nextActionDate" IS NULL OR "nextActionDate" >= "followUpDate"); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ALTER TABLE "ChequeFollowUp" ADD CONSTRAINT chk_followup_next_action_after
+  CHECK ("nextActionDate" IS NULL OR "nextActionDate" >= "followUpDate");
 
-DO $$ BEGIN ALTER TABLE "IssuedChequeFollowUp" ADD CONSTRAINT chk_issuedfollowup_next_action_after CHECK ("nextActionDate" IS NULL OR "nextActionDate" >= "followUpDate"); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ALTER TABLE "IssuedChequeFollowUp" ADD CONSTRAINT chk_issuedfollowup_next_action_after
+  CHECK ("nextActionDate" IS NULL OR "nextActionDate" >= "followUpDate");
 
-DO $$ BEGIN ALTER TABLE "ChequeCheckLog" ADD CONSTRAINT chk_checklog_resolved_after_raised CHECK ("resolvedAt" IS NULL OR "resolvedAt" >= "raisedAt"); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ALTER TABLE "ChequeCheckLog" ADD CONSTRAINT chk_checklog_resolved_after_raised
+  CHECK ("resolvedAt" IS NULL OR "resolvedAt" >= "raisedAt");
 
-DO $$ BEGIN ALTER TABLE "IssuedChequeCheckLog" ADD CONSTRAINT chk_issuedchecklog_resolved_after_raised CHECK ("resolvedAt" IS NULL OR "resolvedAt" >= "raisedAt"); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ALTER TABLE "IssuedChequeCheckLog" ADD CONSTRAINT chk_issuedchecklog_resolved_after_raised
+  CHECK ("resolvedAt" IS NULL OR "resolvedAt" >= "raisedAt");
 
 
 -- ----------------------------------------------------------------------------
@@ -63,7 +73,7 @@ DO $$ BEGIN ALTER TABLE "IssuedChequeCheckLog" ADD CONSTRAINT chk_issuedchecklog
 --    ("ABC Bank" and "abc bank" should not both be allowed)
 -- ----------------------------------------------------------------------------
 ALTER TABLE "Bank" DROP CONSTRAINT IF EXISTS "Bank_name_key"; -- drop the case-sensitive unique Prisma created
-CREATE UNIQUE INDEX IF NOT EXISTS bank_name_ci_unique ON "Bank" (lower(name));
+CREATE UNIQUE INDEX bank_name_ci_unique ON "Bank" (lower(name));
 
 
 -- ----------------------------------------------------------------------------
@@ -89,8 +99,9 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS trg_check_cheque_payment_total ON "ChequePayment";
-CREATE TRIGGER trg_check_cheque_payment_total BEFORE INSERT OR UPDATE ON "ChequePayment" FOR EACH ROW EXECUTE FUNCTION check_cheque_payment_total();
+CREATE TRIGGER trg_check_cheque_payment_total
+  BEFORE INSERT OR UPDATE ON "ChequePayment"
+  FOR EACH ROW EXECUTE FUNCTION check_cheque_payment_total();
 
 
 CREATE OR REPLACE FUNCTION check_issuedcheque_payment_total() RETURNS TRIGGER AS $$
@@ -112,16 +123,19 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS trg_check_issuedcheque_payment_total ON "IssuedChequePayment";
-CREATE TRIGGER trg_check_issuedcheque_payment_total BEFORE INSERT OR UPDATE ON "IssuedChequePayment" FOR EACH ROW EXECUTE FUNCTION check_issuedcheque_payment_total();
+CREATE TRIGGER trg_check_issuedcheque_payment_total
+  BEFORE INSERT OR UPDATE ON "IssuedChequePayment"
+  FOR EACH ROW EXECUTE FUNCTION check_issuedcheque_payment_total();
 
 
 -- ----------------------------------------------------------------------------
 -- N. DailyBankBalance: opening balance and received-today can't go negative
 --    (unlike Cheque/IssuedCheque amounts, 0 is a valid balance, so >= not >)
 -- ----------------------------------------------------------------------------
-DO $$ BEGIN ALTER TABLE "DailyBankBalance" ADD CONSTRAINT chk_dailybankbalance_opening_nonnegative CHECK ("openingBalance" >= 0); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN ALTER TABLE "DailyBankBalance" ADD CONSTRAINT chk_dailybankbalance_received_nonnegative CHECK ("receivedToday" >= 0); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ALTER TABLE "DailyBankBalance" ADD CONSTRAINT chk_dailybankbalance_opening_nonnegative
+  CHECK ("openingBalance" >= 0);
+ALTER TABLE "DailyBankBalance" ADD CONSTRAINT chk_dailybankbalance_received_nonnegative
+  CHECK ("receivedToday" >= 0);
 
 
 -- ----------------------------------------------------------------------------

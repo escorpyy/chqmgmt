@@ -42,43 +42,25 @@ npm install
 
 ```bash
 cp .env.example .env
-# edit .env — point DATABASE_URL at your local Postgres instance
-# and set SESSION_SECRET to a long random string
+# edit .env — point DATABASE_URL at your local Postgres instance,
+# and set SESSION_SECRET to a long random string (e.g. `openssl rand -hex 32`)
 ```
 
-The normal `npm run dev` and `npm start` commands now launch a guided
-connection screen before login when no working configuration is available.
-The screen can scan common local PostgreSQL ports, test host/port/database/
-username/password, apply committed Prisma migrations and manual safety
-constraints, save a local configuration, and then continue to the normal login
-screen. If `DATABASE_URL` and `SESSION_SECRET` are already present in `.env`,
-the application skips the form, but still verifies the connection and applies
-pending Prisma migrations and repeat-safe manual safety constraints before
-starting.
-
-For a first local setup, make sure the target database exists, for example:
+Make sure the target database exists, e.g.:
 
 ```bash
 createdb cheque_tracker
 ```
 
-The guided screen currently saves its connection details in the ignored local
-`data/connection.json` file with restrictive filesystem permissions. This is a
-development-friendly implementation. A production Windows installer should
-replace the password field with Windows Credential Manager or DPAPI storage.
-
-## 3. Run the Prisma migration manually when needed
+## 3. Run the Prisma migration
 
 ```bash
 npx prisma migrate dev --name init
 ```
 
-The first-run connection screen uses the committed migrations with
-`prisma migrate deploy`, so this manual step is normally needed only for
-development when creating a new migration. The command creates all
-tables/enums from `prisma/schema.prisma` and generates the Prisma Client (with
-the `driverAdapters` preview feature the app needs to run through
-`@prisma/adapter-pg`).
+This creates all tables/enums from `prisma/schema.prisma` and generates the
+Prisma Client (with the `driverAdapters` preview feature the app needs to run
+through `@prisma/adapter-pg`).
 
 ## 4. Apply the manual migration additions
 
@@ -89,9 +71,7 @@ party firm/individual sanity, follow-up/check-log date ordering, the
 case-insensitive unique index on `Bank.name`, and the two triggers that stop
 cumulative payments from exceeding a cheque's amount.
 
-The first-run connection screen applies this automatically after the Prisma
-migrations. Apply it manually only when using direct `.env` startup or when
-resetting a development database:
+Apply it once, right after your first migration:
 
 ```bash
 npm run db:apply-manual
