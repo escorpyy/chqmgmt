@@ -85,6 +85,7 @@ router.get('/', asyncHandler(async (req, res) => {
             { accountNo: { contains: trimmedSearch, mode: 'insensitive' } },
             { issuedOn: { contains: trimmedSearch, mode: 'insensitive' } },
             { issuer: { name: { contains: trimmedSearch, mode: 'insensitive' } } },
+            { issuer: { firm: { name: { contains: trimmedSearch, mode: 'insensitive' } } } },
             { bank: { name: { contains: trimmedSearch, mode: 'insensitive' } } },
             { bank: { branch: { contains: trimmedSearch, mode: 'insensitive' } } },
             ...(numericSearch !== null ? [{ amount: numericSearch }] : []),
@@ -94,7 +95,9 @@ router.get('/', asyncHandler(async (req, res) => {
       : {}),
   };
   // Every column actually shown in the register is now searchable: the text
-  // columns above via substring match, amount via exact-value match (typing
+  // columns above via substring match (including the affiliated firm name
+  // shown under an individual issuer, even though it's not its own column),
+  // amount via exact-value match (typing
   // "1500" finds a 1500.00 cheque — not a substring match, since Prisma has
   // no ILIKE-on-numeric without a raw query), and status via a normalized
   // substring match against the enum ("follow" -> FOLLOWUP, "on check" ->

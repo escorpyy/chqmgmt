@@ -15,8 +15,11 @@ import { syncBsDatePicker } from './bsDatePicker.js';
 const PAGE_SIZE = 50;
 let receivedPage = 1;
 let fyFilterPopulated = false;
-const DEFAULT_RECEIVED_SORT = { field: 'chqDate', dir: 'desc' };
-let receivedSort = { ...DEFAULT_RECEIVED_SORT };
+const DEFAULT_RECEIVED_SORT = [{ field: 'chqDate', dir: 'desc' }];
+// A stack of { field, dir } levels, highest priority first. Clicking a new
+// column appends a tie-breaker level; clicking one already in the stack
+// just toggles its direction in place. Only "Clear filters" resets it.
+let receivedSort = DEFAULT_RECEIVED_SORT.map((s) => ({ ...s }));
 
 // Column definitions for the sortable headers — label plus the backend
 // sort field (see the allowedFields list in routes/cheques.js; relation
@@ -36,9 +39,13 @@ const RECEIVED_COLUMNS = [
 function sortableHeaderRow() {
   return RECEIVED_COLUMNS.map(({ label, field }) => {
     if (!field) return `<th>${label}</th>`;
-    const active = receivedSort.field === field;
-    const arrow = active ? (receivedSort.dir === 'asc' ? ' ▲' : ' ▼') : '';
-    return `<th class="sortable${active ? ' sort-active' : ''}" data-sort-field="${field}">${label}${arrow}</th>`;
+    const level = receivedSort.findIndex((s) => s.field === field);
+    if (level === -1) return `<th class="sortable" data-sort-field="${field}">${label}</th>`;
+    const arrow = receivedSort[level].dir === 'asc' ? '▲' : '▼';
+    // Only show the priority number once more than one level is active —
+    // a lone sorted column doesn't need a "1" badge.
+    const badge = receivedSort.length > 1 ? `<sup>${level + 1}</sup>` : '';
+    return `<th class="sortable sort-active" data-sort-field="${field}">${label} ${arrow}${badge}</th>`;
   }).join('');
 }
 
@@ -74,7 +81,7 @@ export async function loadReceived(page = receivedPage) {
   if (dateTo) params.set('dateTo', dateTo);
   if (amountMin !== '') params.set('amountMin', amountMin);
   if (amountMax !== '') params.set('amountMax', amountMax);
-  params.set('sort', `${receivedSort.field}:${receivedSort.dir}`);
+  params.set('sort', receivedSort.map((s) => `${s.field}:${s.dir}`).join(','));
   params.set('page', page);
   params.set('pageSize', PAGE_SIZE);
 
@@ -133,14 +140,21 @@ function renderReceivedTable(cheques, total, page) {
   el.querySelectorAll('th[data-sort-field]').forEach((th) => {
     th.addEventListener('click', () => {
       const field = th.dataset.sortField;
-      if (receivedSort.field === field) {
-        receivedSort.dir = receivedSort.dir === 'asc' ? 'desc' : 'asc';
+      const existing = receivedSort.find((s) => s.field === field);
+      if (existing) {
+        // Already an active level — toggle its direction in place. Its
+        // priority relative to the other levels doesn't change.
+        existing.dir = existing.dir === 'asc' ? 'desc' : 'asc';
       } else {
-        receivedSort = { field, dir: 'asc' };
+        // New column — added as the lowest-priority tie-breaker; every
+        // level already active is left exactly as it was.
+        receivedSort.push({ field, dir: 'asc' });
       }
+      const level = receivedSort.find((s) => s.field === field);
+      const levelNum = receivedSort.length > 1 ? ` (level ${receivedSort.indexOf(level) + 1})` : '';
       const col = RECEIVED_COLUMNS.find((c) => c.field === field);
-      const dirLabel = receivedSort.dir === 'asc' ? 'ascending' : 'descending';
-      toast(`Sorting by ${col.label} — ${dirLabel}`);
+      const dirLabel = level.dir === 'asc' ? 'ascending' : 'descending';
+      toast(`Sorting by ${col.label} — ${dirLabel}${levelNum}`);
       loadReceived(1);
     });
   });
@@ -181,7 +195,7 @@ document.getElementById('btn-received-clear-filters').addEventListener('click', 
   // (wired in main.js on boot) to clear their displayed date too.
   syncBsDatePicker(dateFrom);
   syncBsDatePicker(dateTo);
-  receivedSort = { ...DEFAULT_RECEIVED_SORT };
+  receivedSort = DEFAULT_RECEIVED_SORT.map((s) => ({ ...s }));
   toast('Filters and sorting cleared');
   loadReceived(1);
 });
