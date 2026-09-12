@@ -94,7 +94,7 @@ function openEditStaffModal(member) {
 async function deleteStaff(member) {
   const ok = await openConfirmModal(
     'Delete staff member?',
-    `${escapeHtml(member.name)} will be permanently removed. This only works if no cheques reference them.`,
+    `${escapeHtml(member.name)} will be hidden from new cheques, but existing history is kept and they can be restored from Trash.`,
   );
   if (!ok) return;
   try {

@@ -96,7 +96,7 @@ function openEditBankModal(bank) {
 async function deleteBank(bank) {
   const ok = await openConfirmModal(
     'Delete bank?',
-    `${escapeHtml(bank.name)} will be permanently removed. This only works if no cheques or accounts reference it.`,
+    `${escapeHtml(bank.name)} will be hidden from new cheques and accounts, but existing history is kept and it can be restored from Trash.`,
   );
   if (!ok) return;
   try {

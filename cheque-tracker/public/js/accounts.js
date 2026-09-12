@@ -107,7 +107,7 @@ function openEditAccountModal(account) {
 async function deleteAccount(account) {
   const ok = await openConfirmModal(
     'Delete account?',
-    `${escapeHtml(account.accountName)} will be permanently removed. This only works if no issued cheques reference it.`,
+    `${escapeHtml(account.accountName)} will be hidden from new issued cheques, but existing history is kept and it can be restored from Trash.`,
   );
   if (!ok) return;
   try {

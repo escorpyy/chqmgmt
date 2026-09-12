@@ -27,6 +27,7 @@ import dashboardRouter from './routes/dashboard.js';
 import dailyBalanceRouter from './routes/dailyBalance.js';
 import importExportRouter from './routes/importExport.js';
 import backupsRouter from './routes/backups.js';
+import trashRouter from './routes/trash.js';
 import { startBackupScheduler } from './lib/backup.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -103,6 +104,7 @@ app.use('/api/issued-cheques', requireCompanyContext, issuedChequesRouter);
 app.use('/api/dashboard', requireCompanyContext, dashboardRouter);
 app.use('/api/daily-balance', requireCompanyContext, dailyBalanceRouter);
 app.use('/api/import-export', requireCompanyContext, importExportRouter);
+app.use('/api/trash', requireCompanyContext, trashRouter);
 app.use('/api/backups', requireAdmin, backupsRouter);
 
 // ---- Static frontend ------------------------------------------------------

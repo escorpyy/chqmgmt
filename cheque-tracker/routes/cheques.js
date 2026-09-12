@@ -161,16 +161,16 @@ router.post('/', asyncHandler(async (req, res) => {
   // company's ecosystem could leak into another's via a foreign key.
   const [fy, issuer, bank, presentedBank, staff] = await Promise.all([
     prisma.fiscalYear.findFirst({ where: { id: fiscalYearId, companyId } }),
-    prisma.party.findFirst({ where: { id: issuerId, companyId } }),
-    prisma.bank.findFirst({ where: { id: bankId, companyId } }),
-    presentedBankId ? prisma.bank.findFirst({ where: { id: presentedBankId, companyId } }) : null,
-    staffId ? prisma.staff.findFirst({ where: { id: staffId, companyId } }) : null,
+    prisma.party.findFirst({ where: { id: issuerId, companyId, deletedAt: null } }),
+    prisma.bank.findFirst({ where: { id: bankId, companyId, deletedAt: null } }),
+    presentedBankId ? prisma.bank.findFirst({ where: { id: presentedBankId, companyId, deletedAt: null } }) : null,
+    staffId ? prisma.staff.findFirst({ where: { id: staffId, companyId, deletedAt: null } }) : null,
   ]);
   if (!fy) return res.status(400).json({ error: 'fiscalYearId does not belong to the selected company' });
-  if (!issuer) return res.status(400).json({ error: 'issuerId does not belong to the selected company' });
-  if (!bank) return res.status(400).json({ error: 'bankId does not belong to the selected company' });
-  if (presentedBankId && !presentedBank) return res.status(400).json({ error: 'presentedBankId does not belong to the selected company' });
-  if (staffId && !staff) return res.status(400).json({ error: 'staffId does not belong to the selected company' });
+  if (!issuer) return res.status(400).json({ error: 'issuerId does not belong to the selected company or has been deleted' });
+  if (!bank) return res.status(400).json({ error: 'bankId does not belong to the selected company or has been deleted' });
+  if (presentedBankId && !presentedBank) return res.status(400).json({ error: 'presentedBankId does not belong to the selected company or has been deleted' });
+  if (staffId && !staff) return res.status(400).json({ error: 'staffId does not belong to the selected company or has been deleted' });
 
   // payableToCompany is only meaningful when issuedOnType is FIRM; force it
   // to false for INDIVIDUAL payees rather than trusting the client to omit it.
@@ -250,14 +250,14 @@ router.patch('/:id', asyncHandler(async (req, res) => {
 
   // Any changed foreign keys must still point within this cheque's own company.
   const [newBank, newPresentedBank, newStaff, newFy] = await Promise.all([
-    bankId !== undefined ? prisma.bank.findFirst({ where: { id: bankId, companyId: existing.companyId } }) : true,
-    presentedBankId ? prisma.bank.findFirst({ where: { id: presentedBankId, companyId: existing.companyId } }) : true,
-    staffId ? prisma.staff.findFirst({ where: { id: staffId, companyId: existing.companyId } }) : true,
+    bankId !== undefined ? prisma.bank.findFirst({ where: { id: bankId, companyId: existing.companyId, deletedAt: null } }) : true,
+    presentedBankId ? prisma.bank.findFirst({ where: { id: presentedBankId, companyId: existing.companyId, deletedAt: null } }) : true,
+    staffId ? prisma.staff.findFirst({ where: { id: staffId, companyId: existing.companyId, deletedAt: null } }) : true,
     fiscalYearId !== undefined ? prisma.fiscalYear.findFirst({ where: { id: fiscalYearId, companyId: existing.companyId } }) : true,
   ]);
-  if (bankId !== undefined && !newBank) return res.status(400).json({ error: 'bankId does not belong to this cheque\'s company' });
-  if (presentedBankId && !newPresentedBank) return res.status(400).json({ error: 'presentedBankId does not belong to this cheque\'s company' });
-  if (staffId && !newStaff) return res.status(400).json({ error: 'staffId does not belong to this cheque\'s company' });
+  if (bankId !== undefined && !newBank) return res.status(400).json({ error: 'bankId does not belong to this cheque\'s company or has been deleted' });
+  if (presentedBankId && !newPresentedBank) return res.status(400).json({ error: 'presentedBankId does not belong to this cheque\'s company or has been deleted' });
+  if (staffId && !newStaff) return res.status(400).json({ error: 'staffId does not belong to this cheque\'s company or has been deleted' });
   if (fiscalYearId !== undefined && !newFy) return res.status(400).json({ error: 'fiscalYearId does not belong to this cheque\'s company' });
 
   const cheque = await prisma.cheque.update({
@@ -574,6 +574,17 @@ router.delete('/:id', asyncHandler(async (req, res) => {
   const cheque = await prisma.cheque.update({
     where: { id: req.params.id },
     data: { deletedAt: new Date() },
+  });
+  res.json(cheque);
+}));
+
+// POST /api/cheques/:id/restore
+router.post('/:id/restore', asyncHandler(async (req, res) => {
+  const existing = await prisma.cheque.findFirst({ where: { id: req.params.id, ...companyWhere(req) } });
+  if (!existing) return res.status(404).json({ error: 'Cheque not found' });
+  const cheque = await prisma.cheque.update({
+    where: { id: req.params.id },
+    data: { deletedAt: null },
   });
   res.json(cheque);
 }));

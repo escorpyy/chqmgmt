@@ -557,7 +557,7 @@ function openChequeEditModal(c) {
 async function deleteCheque(c) {
   const ok = await openConfirmModal(
     'Delete cheque?',
-    `This removes cheque ${escapeHtml(c.chqNo)} from active lists. Its history is kept, not erased.`,
+    `This removes cheque ${escapeHtml(c.chqNo)} from active lists and can be restored from Trash. Its history is kept, not erased.`,
   );
   if (!ok) return;
   try {

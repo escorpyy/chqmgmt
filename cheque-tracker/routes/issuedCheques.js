@@ -91,13 +91,13 @@ router.post('/', asyncHandler(async (req, res) => {
 
   // The account, payee, and issuing staff must all belong to this company.
   const [account, payee, issuedBy] = await Promise.all([
-    prisma.companyBankAccount.findFirst({ where: { id: companyBankAccountId, companyId } }),
-    payeeId ? prisma.party.findFirst({ where: { id: payeeId, companyId } }) : null,
-    issuedById ? prisma.staff.findFirst({ where: { id: issuedById, companyId } }) : null,
+    prisma.companyBankAccount.findFirst({ where: { id: companyBankAccountId, companyId, deletedAt: null } }),
+    payeeId ? prisma.party.findFirst({ where: { id: payeeId, companyId, deletedAt: null } }) : null,
+    issuedById ? prisma.staff.findFirst({ where: { id: issuedById, companyId, deletedAt: null } }) : null,
   ]);
-  if (!account) return res.status(400).json({ error: 'companyBankAccountId does not belong to the selected company' });
-  if (payeeId && !payee) return res.status(400).json({ error: 'payeeId does not belong to the selected company' });
-  if (issuedById && !issuedBy) return res.status(400).json({ error: 'issuedById does not belong to the selected company' });
+  if (!account) return res.status(400).json({ error: 'companyBankAccountId does not belong to the selected company or has been deleted' });
+  if (payeeId && !payee) return res.status(400).json({ error: 'payeeId does not belong to the selected company or has been deleted' });
+  if (issuedById && !issuedBy) return res.status(400).json({ error: 'issuedById does not belong to the selected company or has been deleted' });
 
   const cheque = await prisma.issuedCheque.create({
     data: {
@@ -167,8 +167,8 @@ router.patch('/:id', asyncHandler(async (req, res) => {
   }
 
   if (companyBankAccountId !== undefined) {
-    const account = await prisma.companyBankAccount.findFirst({ where: { id: companyBankAccountId, companyId: existing.companyId } });
-    if (!account) return res.status(400).json({ error: 'companyBankAccountId does not belong to this cheque\'s company' });
+    const account = await prisma.companyBankAccount.findFirst({ where: { id: companyBankAccountId, companyId: existing.companyId, deletedAt: null } });
+    if (!account) return res.status(400).json({ error: 'companyBankAccountId does not belong to this cheque\'s company or has been deleted' });
   }
 
   const cheque = await prisma.issuedCheque.update({
@@ -456,6 +456,17 @@ router.delete('/:id', asyncHandler(async (req, res) => {
   const cheque = await prisma.issuedCheque.update({
     where: { id: req.params.id },
     data: { deletedAt: new Date() },
+  });
+  res.json(cheque);
+}));
+
+// POST /api/issued-cheques/:id/restore
+router.post('/:id/restore', asyncHandler(async (req, res) => {
+  const existing = await prisma.issuedCheque.findFirst({ where: { id: req.params.id, ...companyWhere(req) } });
+  if (!existing) return res.status(404).json({ error: 'Issued cheque not found' });
+  const cheque = await prisma.issuedCheque.update({
+    where: { id: req.params.id },
+    data: { deletedAt: null },
   });
   res.json(cheque);
 }));

@@ -192,6 +192,7 @@ model Bank {
   draweeCheques    Cheque[] @relation("DraweeBank")
   presentedCheques Cheque[] @relation("PresentedBank")
   companyAccounts  CompanyBankAccount[]
+  deletedAt        DateTime? // soft delete — a bank used on old cheques must never be hard-deleted
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -218,6 +219,7 @@ model Staff {
   checkLogs       ChequeCheckLog[]       @relation("RaisedBy")
   issuedCheckLogs IssuedChequeCheckLog[] @relation("IssuedRaisedBy")
 
+  deletedAt DateTime?        // soft delete — a staff member with cheque history must never be hard-deleted
   createdAt DateTime         @default(now())
   updatedAt DateTime         @updatedAt
 
@@ -237,6 +239,7 @@ model CompanyBankAccount {
   branch        String?
   issuedCheques IssuedCheque[]
   dailyBalances DailyBankBalance[]
+  deletedAt     DateTime? // soft delete — an account used on old issued cheques must never be hard-deleted
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
