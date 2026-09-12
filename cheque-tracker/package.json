@@ -10,8 +10,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
-    "db:apply-manual": "node scripts/apply-manual-migration.js",
-    "create-admin": "node scripts/create-admin.js"
+    "db:apply-manual": "node scripts/apply-manual-migration.js"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^5.20.0",

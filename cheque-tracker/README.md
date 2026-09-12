@@ -79,20 +79,23 @@ npm run db:apply-manual
 
 Re-run this any time you reset the database (`prisma migrate reset`).
 
-## 5. Create your first login
+## 5. Sign in for the first time
 
-The app requires sign-in — there's no self-registration screen, since this
-is a single-business internal tool. Create the first admin account from the
-CLI:
+The app requires sign-in — there's no self-registration screen, since this is a
+single-business internal tool. On startup, if an `admin` user does not already
+exist, the server creates one with the `ADMIN` role and these initial
+credentials:
 
-```bash
-npm run create-admin -- <username> <password>
+```text
+Username: admin
+Password: admin
 ```
 
-This upserts a user with the `ADMIN` role (pass `--staff` as a third arg to
-create a regular staff login instead). Once you're signed in, the **Users**
-tab (visible to admins only) lets you create and manage further logins —
-role, active/deactivated, password reset — without touching the CLI again.
+Sign in with those credentials and immediately change the password from the
+admin-only **Users** tab. The server never overwrites an existing `admin`
+account or password on later startups. Once you're signed in, the **Users** tab
+lets administrators create and manage further logins — role, active/deactivated,
+and password reset — without a CLI command.
 
 Sessions are stored server-side in Postgres (the `session` table, created by
 the migration above) via `connect-pg-simple`, so restarting the server

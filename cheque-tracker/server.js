@@ -5,6 +5,7 @@ import compression from 'compression';
 import session from 'express-session';
 import connectPgSimple from 'connect-pg-simple';
 import pg from 'pg';
+import bcrypt from 'bcryptjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Prisma } from '@prisma/client';
@@ -27,6 +28,19 @@ import dailyBalanceRouter from './routes/dailyBalance.js';
 import importExportRouter from './routes/importExport.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+async function ensureDefaultAdmin() {
+  const passwordHash = await bcrypt.hash('admin', 10);
+  const admin = await prisma.user.upsert({
+    where: { username: 'admin' },
+    update: {},
+    create: { username: 'admin', passwordHash, role: 'ADMIN', isActive: true },
+    select: { username: true, role: true, isActive: true },
+  });
+  if (admin.role === 'ADMIN' && admin.isActive) {
+    console.log('Admin account ready: username "admin" (change the initial password in Users).');
+  }
+}
 
 if (!process.env.SESSION_SECRET) {
   throw new Error('SESSION_SECRET is not set. Add a long random string to .env.');
@@ -161,6 +175,14 @@ app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Cheque tracker running at http://localhost:${PORT}`);
+async function startServer() {
+  await ensureDefaultAdmin();
+  app.listen(PORT, () => {
+    console.log(`Cheque tracker running at http://localhost:${PORT}`);
+  });
+}
+
+startServer().catch((err) => {
+  console.error('Failed to initialize the default admin account:', err.message);
+  process.exit(1);
 });
