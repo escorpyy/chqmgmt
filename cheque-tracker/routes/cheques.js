@@ -34,8 +34,25 @@ router.get('/', asyncHandler(async (req, res) => {
 
   const parsedFrom = parseDateOrNull(dateFrom);
   const parsedTo = parseDateOrNull(dateTo);
-  const parsedAmountMin = amountMin !== undefined && amountMin !== '' && !isNaN(Number(amountMin)) ? Number(amountMin) : null;
-  const parsedAmountMax = amountMax !== undefined && amountMax !== '' && !isNaN(Number(amountMax)) ? Number(amountMax) : null;
+  if ((dateFrom !== undefined && dateFrom !== '' && !parsedFrom)
+    || (dateTo !== undefined && dateTo !== '' && !parsedTo)) {
+    return res.status(400).json({ error: 'dateFrom and dateTo must be valid dates' });
+  }
+  const hasAmountMin = amountMin !== undefined && amountMin !== '';
+  const hasAmountMax = amountMax !== undefined && amountMax !== '';
+  const parsedAmountMin = hasAmountMin ? Number(amountMin) : null;
+  const parsedAmountMax = hasAmountMax ? Number(amountMax) : null;
+  if ((hasAmountMin && (!Number.isFinite(parsedAmountMin) || parsedAmountMin < 0))
+    || (hasAmountMax && (!Number.isFinite(parsedAmountMax) || parsedAmountMax < 0))) {
+    return res.status(400).json({ error: 'amountMin and amountMax must be non-negative numbers' });
+  }
+  if (parsedAmountMin !== null && parsedAmountMax !== null && parsedAmountMin > parsedAmountMax) {
+    return res.status(400).json({ error: 'amountMin cannot be greater than amountMax' });
+  }
+  // A date-only query parameter parses at midnight. Use an exclusive upper
+  // bound for dateTo so records at any time on the selected end date match.
+  const exclusiveTo = parsedTo ? new Date(parsedTo) : null;
+  if (exclusiveTo) exclusiveTo.setUTCDate(exclusiveTo.getUTCDate() + 1);
 
   // The free-text search box also doubles as a plain-number lookup (exact
   // amount match — Prisma can't ILIKE-substring-match a numeric column
@@ -53,23 +70,23 @@ router.get('/', asyncHandler(async (req, res) => {
     ...(includeDeleted === 'true' ? {} : { deletedAt: null }),
     ...statusWhereFragment(status, CHEQUE_STATUSES),
     ...(fiscalYearId ? { fiscalYearId } : {}),
-    ...((parsedFrom || parsedTo)
-      ? { chqDate: { ...(parsedFrom ? { gte: parsedFrom } : {}), ...(parsedTo ? { lte: parsedTo } : {}) } }
+    ...((parsedFrom || exclusiveTo)
+      ? { chqDate: { ...(parsedFrom ? { gte: parsedFrom } : {}), ...(exclusiveTo ? { lt: exclusiveTo } : {}) } }
       : {}),
     ...((parsedAmountMin !== null || parsedAmountMax !== null)
       ? { amount: { ...(parsedAmountMin !== null ? { gte: parsedAmountMin } : {}), ...(parsedAmountMax !== null ? { lte: parsedAmountMax } : {}) } }
       : {}),
-    ...(search
+    ...(trimmedSearch
       ? {
           OR: [
-            { chqNo: { contains: search, mode: 'insensitive' } },
-            { refNo: { contains: search, mode: 'insensitive' } },
-            { receiptNo: { contains: search, mode: 'insensitive' } },
-            { accountNo: { contains: search, mode: 'insensitive' } },
-            { issuedOn: { contains: search, mode: 'insensitive' } },
-            { issuer: { name: { contains: search, mode: 'insensitive' } } },
-            { bank: { name: { contains: search, mode: 'insensitive' } } },
-            { bank: { branch: { contains: search, mode: 'insensitive' } } },
+            { chqNo: { contains: trimmedSearch, mode: 'insensitive' } },
+            { refNo: { contains: trimmedSearch, mode: 'insensitive' } },
+            { receiptNo: { contains: trimmedSearch, mode: 'insensitive' } },
+            { accountNo: { contains: trimmedSearch, mode: 'insensitive' } },
+            { issuedOn: { contains: trimmedSearch, mode: 'insensitive' } },
+            { issuer: { name: { contains: trimmedSearch, mode: 'insensitive' } } },
+            { bank: { name: { contains: trimmedSearch, mode: 'insensitive' } } },
+            { bank: { branch: { contains: trimmedSearch, mode: 'insensitive' } } },
             ...(numericSearch !== null ? [{ amount: numericSearch }] : []),
             ...(matchedStatuses.length ? [{ status: { in: matchedStatuses } }] : []),
           ],

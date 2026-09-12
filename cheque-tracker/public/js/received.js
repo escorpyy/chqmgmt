@@ -59,7 +59,7 @@ function populateFyFilter() {
 
 export async function loadReceived(page = receivedPage) {
   populateFyFilter();
-  const search = document.getElementById('received-search').value;
+  const search = document.getElementById('received-search').value.trim();
   const status = document.getElementById('received-status-filter').value;
   const fiscalYearId = document.getElementById('received-fy-filter').value;
   const dateFrom = document.getElementById('received-date-from').value;
@@ -72,8 +72,8 @@ export async function loadReceived(page = receivedPage) {
   if (fiscalYearId) params.set('fiscalYearId', fiscalYearId);
   if (dateFrom) params.set('dateFrom', dateFrom);
   if (dateTo) params.set('dateTo', dateTo);
-  if (amountMin) params.set('amountMin', amountMin);
-  if (amountMax) params.set('amountMax', amountMax);
+  if (amountMin !== '') params.set('amountMin', amountMin);
+  if (amountMax !== '') params.set('amountMax', amountMax);
   params.set('sort', `${receivedSort.field}:${receivedSort.dir}`);
   params.set('page', page);
   params.set('pageSize', PAGE_SIZE);
