@@ -316,10 +316,11 @@ main:has(#panel-issued.active) {
 }
 .toolbar input[type="search"] { flex: 1; max-width: 320px; }
 
-/* Received cheques — filter strip stays a thin band, table gets the rest
-   of the panel's height. #panel-received gets a viewport-based height so
-   there's an actual "rest of the height" for the table wrap to flex into;
-   200px is masthead + tabs + panel-head, adjust here if that chrome grows. */
+/* Received cheques — filter strip is a single thin line (~2% of the panel);
+   the table wrap takes essentially everything else via flex. #panel-received
+   gets a viewport-based height so there's an actual "rest of the height" for
+   the table to flex into; 200px is masthead + tabs + panel-head, adjust here
+   if that chrome grows. */
 #panel-received.active {
   display: flex;
   flex-direction: column;
@@ -331,75 +332,88 @@ main:has(#panel-issued.active) {
   flex-direction: column;
   min-height: 0;
 }
+/* One flat row — search, status, date range, fiscal year, clear — all sized
+   down and packed tight so the strip reads as a hairline of chrome above the
+   ledger, not a second panel of its own. Wraps only if the window is
+   genuinely too narrow to hold it. */
 .received-filters {
   flex: 0 0 auto;
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1.5rem;
-  padding-bottom: 0.75rem;
-  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  padding-bottom: 0.4rem;
+  margin-bottom: 0.4rem;
   border-bottom: 1px solid var(--line);
 }
-.filters-left {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  flex: 1 1 auto;
-}
-.filters-left input[type="search"],
-.filters-left select {
+.received-filters input[type="search"],
+.received-filters select {
   font-family: var(--font-body);
-  font-size: 0.85rem;
-  padding: 0.5rem 0.7rem;
+  font-size: 0.78rem;
+  padding: 0.3rem 0.5rem;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface-raise);
   color: var(--ink);
+  line-height: 1.3;
 }
-.filters-left input[type="search"] { flex: 1; max-width: 320px; }
-.filters-right {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.5rem;
-  flex: 0 0 auto;
+.received-filters input[type="search"] {
+  flex: 1 1 auto;
+  min-width: 140px;
+  max-width: 240px;
 }
+.received-filters select#received-status-filter { flex: 0 0 auto; }
 .date-range-filter {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.3rem;
+  flex: 0 0 auto;
 }
-.date-range-filter input[type="date"] {
-  font-family: var(--font-body);
-  font-size: 0.82rem;
-  padding: 0.4rem 0.55rem;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface-raise);
-  color: var(--ink);
-}
-.date-range-sep { font-size: 0.78rem; color: var(--ink-soft); }
+.date-range-sep { font-size: 0.72rem; color: var(--ink-faint); }
 .received-filters .fy-select {
-  font-family: var(--font-body);
-  font-size: 0.85rem;
   font-weight: 600;
-  padding: 0.4rem 0.7rem;
-  border: 1px solid var(--ink);
-  border-radius: var(--radius);
-  background: var(--surface-raise);
-  color: var(--ink);
-  min-width: 200px;
+  min-width: 0;
+  flex: 0 0 auto;
 }
-.received-filters .fy-select:focus,
-.date-range-filter input:focus {
+.received-filters input:focus,
+.received-filters select:focus {
   outline: 2px solid var(--brand);
   outline-offset: 1px;
+  border-color: var(--brand);
+}
+/* The BS picker (bsDatePicker.js) is built for spacious create/edit forms —
+   full-width year/month/day selects, a "Today" shortcut, an AD hint line.
+   In this filter strip it only needs to be a compact BS range picker, so
+   shrink the controls and drop "Today" (a filter range rarely needs it) to
+   keep the whole strip on one line. */
+.received-filters .bs-date-field {
+  gap: 0.2rem;
+}
+.received-filters .bs-date-select {
+  font-size: 0.72rem;
+  padding: 0.2rem 0.3rem;
+}
+.received-filters .bs-date-select.bs-date-year { flex-basis: 4.2rem; }
+.received-filters .bs-date-select.bs-date-month { flex-basis: 5rem; }
+.received-filters .bs-date-select.bs-date-day { flex-basis: 3rem; }
+.received-filters .bs-date-today { display: none; }
+.received-filters .bs-date-hint {
+  flex-basis: auto;
+  font-size: 0.68rem;
 }
 .received-table-wrap {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+}
+/* Header stays visible while the ledger scrolls within its 98%-of-panel
+   space — purely a positioning change, the table's own markup and cell
+   styling are untouched. */
+.received-table-wrap table.ledger thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 1;
 }
 .sr-only {
   position: absolute;

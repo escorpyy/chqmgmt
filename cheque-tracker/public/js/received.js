@@ -7,6 +7,7 @@ import { escapeHtml, fmtDate, fmtDateStacked, fmtMoney, fmtDateInput, humanize, 
 import { RECEIVED_STATUSES, FOLLOWUP_RESPONSES, RETURN_REASONS, PAYMENT_METHODS, CLEARANCE_METHODS, PARTY_TYPES } from './constants.js';
 import { loadDashboard } from './dashboard.js';
 import { syncEditableSelect } from './combobox.js';
+import { syncBsDatePicker } from './bsDatePicker.js';
 
 // ============================================================================
 // RECEIVED CHEQUES
@@ -14,7 +15,8 @@ import { syncEditableSelect } from './combobox.js';
 const PAGE_SIZE = 50;
 let receivedPage = 1;
 let fyFilterPopulated = false;
-let receivedSort = { field: 'chqDate', dir: 'desc' };
+const DEFAULT_RECEIVED_SORT = { field: 'chqDate', dir: 'desc' };
+let receivedSort = { ...DEFAULT_RECEIVED_SORT };
 
 // Column definitions for the sortable headers — label plus the backend
 // sort field (see the allowedFields list in routes/cheques.js; relation
@@ -129,6 +131,9 @@ function renderReceivedTable(cheques, total, page) {
       } else {
         receivedSort = { field, dir: 'asc' };
       }
+      const col = RECEIVED_COLUMNS.find((c) => c.field === field);
+      const dirLabel = receivedSort.dir === 'asc' ? 'ascending' : 'descending';
+      toast(`Sorting by ${col.label} — ${dirLabel}`);
       loadReceived(1);
     });
   });
@@ -152,6 +157,23 @@ document.getElementById('received-status-filter').addEventListener('change', () 
 document.getElementById('received-fy-filter').addEventListener('change', () => loadReceived(1));
 document.getElementById('received-date-from').addEventListener('change', () => loadReceived(1));
 document.getElementById('received-date-to').addEventListener('change', () => loadReceived(1));
+
+document.getElementById('btn-received-clear-filters').addEventListener('click', () => {
+  document.getElementById('received-search').value = '';
+  document.getElementById('received-status-filter').value = '';
+  document.getElementById('received-fy-filter').value = '';
+  const dateFrom = document.getElementById('received-date-from');
+  const dateTo = document.getElementById('received-date-to');
+  dateFrom.value = '';
+  dateTo.value = '';
+  // Setting .value directly doesn't fire 'change', so nudge the BS pickers
+  // (wired in main.js on boot) to clear their year/month/day selects too.
+  syncBsDatePicker(dateFrom);
+  syncBsDatePicker(dateTo);
+  receivedSort = { ...DEFAULT_RECEIVED_SORT };
+  toast('Filters and sorting cleared');
+  loadReceived(1);
+});
 
 document.getElementById('btn-new-cheque').addEventListener('click', () => openNewChequeModal());
 

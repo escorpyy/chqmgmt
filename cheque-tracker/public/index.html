@@ -69,36 +69,38 @@
     </div>
 
     <div class="received-layout">
-      <!-- Compact filter strip — search+status on the left, date-range
-           and fiscal-year filters stacked on the right. This row is meant
-           to stay small so the table below gets the bulk of the panel. -->
+      <!-- Compact filter strip — one flat line (~2% of the panel); the
+           table below gets essentially all of the remaining height. Date
+           range uses the same BS (Bikram Sambat) picker as the rest of the
+           app (bsDatePicker.js auto-wires the native inputs below on boot). -->
       <div class="received-filters">
-        <div class="filters-left">
-          <input type="search" id="received-search" placeholder="Search cheque no, ref no, issuer…">
-          <select id="received-status-filter">
-            <option value="">All statuses</option>
-            <option value="PENDING">Pending</option>
-            <option value="DEPOSITED">Deposited</option>
-            <option value="FOLLOWUP">Follow-up</option>
-            <option value="ON_CHECK">On check</option>
-            <option value="PRESENTED">Presented</option>
-            <option value="CLEARED">Cleared</option>
-            <option value="RETURNED">Returned</option>
-            <option value="CANCELLED">Cancelled</option>
-          </select>
-        </div>
-        <div class="filters-right">
-          <div class="date-range-filter">
-            <label for="received-date-from" class="sr-only">From</label>
+        <input type="search" id="received-search" placeholder="Search cheque no, ref no, issuer…">
+        <select id="received-status-filter">
+          <option value="">All statuses</option>
+          <option value="PENDING">Pending</option>
+          <option value="DEPOSITED">Deposited</option>
+          <option value="FOLLOWUP">Follow-up</option>
+          <option value="ON_CHECK">On check</option>
+          <option value="PRESENTED">Presented</option>
+          <option value="CLEARED">Cleared</option>
+          <option value="RETURNED">Returned</option>
+          <option value="CANCELLED">Cancelled</option>
+        </select>
+        <div class="date-range-filter">
+          <label for="received-date-from" class="sr-only">Cheque date from (BS)</label>
+          <div class="field">
             <input type="date" id="received-date-from" title="Cheque date from">
-            <span class="date-range-sep">to</span>
-            <label for="received-date-to" class="sr-only">To</label>
+          </div>
+          <span class="date-range-sep">to</span>
+          <label for="received-date-to" class="sr-only">Cheque date to (BS)</label>
+          <div class="field">
             <input type="date" id="received-date-to" title="Cheque date to">
           </div>
-          <select id="received-fy-filter" class="fy-select">
-            <option value="">All fiscal years</option>
-          </select>
         </div>
+        <select id="received-fy-filter" class="fy-select">
+          <option value="">All fiscal years</option>
+        </select>
+        <button type="button" id="btn-received-clear-filters" class="btn btn-ghost btn-sm" title="Reset search, filters and sorting">Clear</button>
       </div>
 
       <div class="received-table-wrap">
