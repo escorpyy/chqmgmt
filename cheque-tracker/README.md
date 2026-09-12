@@ -97,7 +97,24 @@ npm run db:apply-manual
 
 Re-run this any time you reset the database (`prisma migrate reset`).
 
-## 5. Sign in for the first time
+## 5. Backups and restore
+
+Administrators can open the **Settings** tab to configure scheduled PostgreSQL
+backups, create an on-demand backup, download a backup file, or restore a
+backup. Scheduled backups are stored in the ignored local `data/backups/`
+directory and retention removes older files after each scheduled or manual
+backup. Copy important backup files to separate protected storage; local files
+do not protect against disk failure, theft, or ransomware.
+
+The restore flow requires typing `RESTORE` and confirming a warning. Before a
+restore begins, the application creates a `pre-restore` backup of the current
+database. Restore replaces database contents and may invalidate active
+sessions, so sign out and sign in again afterward. The PostgreSQL command-line
+tools `pg_dump` and `pg_restore` must be installed and available on the server's
+PATH. Do not expose the backup download endpoint outside the authenticated
+application.
+
+## 6. Sign in for the first time
 
 The app requires sign-in — there's no self-registration screen, since this is a
 single-business internal tool. On startup, if an `admin` user does not already

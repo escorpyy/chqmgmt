@@ -47,7 +47,7 @@ function renderUserBadge(user) {
   if (user.role === 'ADMIN') {
     document.getElementById('tabs').insertAdjacentHTML(
       'beforeend',
-      '<button class="tab" data-tab="users">Users</button>',
+      '<button class="tab" data-tab="users">Users</button><button class="tab" data-tab="settings">Settings</button>',
     );
     initUsersTab();
   }

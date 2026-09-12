@@ -26,6 +26,8 @@ import issuedChequesRouter from './routes/issuedCheques.js';
 import dashboardRouter from './routes/dashboard.js';
 import dailyBalanceRouter from './routes/dailyBalance.js';
 import importExportRouter from './routes/importExport.js';
+import backupsRouter from './routes/backups.js';
+import { startBackupScheduler } from './lib/backup.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -101,6 +103,7 @@ app.use('/api/issued-cheques', requireCompanyContext, issuedChequesRouter);
 app.use('/api/dashboard', requireCompanyContext, dashboardRouter);
 app.use('/api/daily-balance', requireCompanyContext, dailyBalanceRouter);
 app.use('/api/import-export', requireCompanyContext, importExportRouter);
+app.use('/api/backups', requireAdmin, backupsRouter);
 
 // ---- Static frontend ------------------------------------------------------
 app.use(express.static(path.join(__dirname, 'public'), {
@@ -177,6 +180,7 @@ app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
 const PORT = process.env.PORT || 3000;
 async function startServer() {
   await ensureDefaultAdmin();
+  await startBackupScheduler();
   app.listen(PORT, () => {
     console.log(`Cheque tracker running at http://localhost:${PORT}`);
   });

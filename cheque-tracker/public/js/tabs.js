@@ -9,6 +9,7 @@ import { loadAccounts } from './accounts.js';
 import { loadStaff } from './staff.js';
 import { loadFiscalYears } from './fiscalYears.js';
 import { loadUsers } from './users.js';
+import { loadSettings } from './settings.js';
 
 // ============================================================================
 // Tabs
@@ -25,6 +26,7 @@ const TAB_LOADERS = {
   staff: loadStaff,
   'fiscal-years': loadFiscalYears,
   users: loadUsers,
+  settings: loadSettings,
 };
 
 document.getElementById('tabs').addEventListener('click', (e) => {

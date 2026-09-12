@@ -873,3 +873,33 @@ td.row-actions {
 @media (prefers-reduced-motion: reduce) {
   .drawer, .toast { transition: none; animation: none; }
 }
+
+/* ==========================================================================
+   Settings / backups
+   ========================================================================== */
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1.25rem;
+  margin-bottom: 1.25rem;
+}
+.settings-card {
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  padding: 1.1rem 1.2rem 1.25rem;
+}
+.settings-card h3 { margin-top: 0; }
+.settings-card .btn { margin-top: 0.75rem; }
+.settings-card .warning-text { color: var(--danger); font-size: 0.86rem; }
+.backup-list { list-style: none; padding: 0; margin: 0; }
+.backup-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.7rem 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.backup-list li:last-child { border-bottom: 0; }
+.backup-list small { display: block; color: var(--ink-faint); margin-top: 0.2rem; }
