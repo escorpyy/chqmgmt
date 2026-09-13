@@ -3,6 +3,7 @@ import multer from 'multer';
 import XLSX from 'xlsx';
 import { asyncHandler } from '../lib/asyncHandler.js';
 import { TABLES, TABLE_KEYS, describeError } from '../lib/importExportConfig.js';
+import { requireSingleCompany } from '../lib/companyScope.js';
 
 const router = Router();
 
@@ -52,13 +53,15 @@ router.get('/tables', asyncHandler(async (req, res) => {
   res.json(TABLE_KEYS.map((key) => ({ key, label: TABLES[key].label, columns: TABLES[key].columns })));
 }));
 
-// GET /api/import-export/:table/export — download all current rows as .xlsx.
-// A record that fails to convert (e.g. a corrupt legacy date) is skipped
-// rather than failing the whole export; how many were skipped is reported
-// via the X-Row-Errors header so the frontend can offer the error report.
+// GET /api/import-export/:table/export — download all current rows as .xlsx,
+// scoped to the caller's selected company (or every company they own, if
+// "all" is selected — never cross-tenant). A record that fails to convert
+// (e.g. a corrupt legacy date) is skipped rather than failing the whole
+// export; how many were skipped is reported via the X-Row-Errors header so
+// the frontend can offer the error report.
 router.get('/:table/export', asyncHandler(async (req, res) => {
   const table = getTable(req.params.table);
-  const { rows, errors } = await table.export();
+  const { rows, errors } = await table.export(req);
   res.setHeader('X-Row-Errors', String(errors.length));
   res.setHeader('Access-Control-Expose-Headers', 'X-Row-Errors');
   sendWorkbook(res, `${req.params.table}.xlsx`, rows, table.columns);
@@ -69,7 +72,7 @@ router.get('/:table/export', asyncHandler(async (req, res) => {
 // an /export that reported X-Row-Errors > 0.
 router.get('/:table/export-errors', asyncHandler(async (req, res) => {
   const table = getTable(req.params.table);
-  const { errors } = await table.export();
+  const { errors } = await table.export(req);
   sendErrorReport(res, `${req.params.table}-export-errors.xlsx`, table.columns, errors);
 }));
 
@@ -93,6 +96,13 @@ router.post('/:table/import', upload.single('file'), asyncHandler(async (req, re
   const mode = req.body.mode === 'replace' ? 'replace' : 'append';
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
+  // Creating/deleting records only makes sense under one concrete company —
+  // "all companies" is a read-only view for export, not a valid import
+  // target. requireSingleCompany() sends its own 400 response when nothing
+  // specific is selected.
+  const companyId = requireSingleCompany(req, res);
+  if (!companyId) return;
+
   let rows;
   try {
     const workbook = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
@@ -109,7 +119,7 @@ router.post('/:table/import', upload.single('file'), asyncHandler(async (req, re
   let deletedAll = false;
   if (mode === 'replace') {
     try {
-      await table.deleteAll();
+      await table.deleteAll(companyId);
       deletedAll = true;
     } catch (err) {
       return res.status(409).json({
@@ -132,7 +142,7 @@ router.post('/:table/import', upload.single('file'), asyncHandler(async (req, re
       for (const [key, value] of Object.entries(rows[i])) {
         normalized[key] = value instanceof Date ? value.toISOString().slice(0, 10) : value;
       }
-      await table.importRow(normalized);
+      await table.importRow(normalized, companyId);
       created += 1;
     } catch (err) {
       // One bad row (bad reference, duplicate key, bad enum value, whatever)
