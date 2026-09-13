@@ -12,6 +12,30 @@ import { loadReferenceData } from './referenceData.js';
 // multipart/form-data, which needs the browser to set its own Content-Type
 // with a boundary — api() always forces 'application/json'.
 
+// Decodes a base64 string into a Blob and triggers a browser download for it.
+function downloadBase64(base64, filename, mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
+  const bytes = atob(base64);
+  const buffer = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i += 1) buffer[i] = bytes.charCodeAt(i);
+  downloadBlob(new Blob([buffer], { type: mimeType }), filename);
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function filenameFromContentDisposition(header, fallback) {
+  const match = /filename="?([^"]+)"?/.exec(header || '');
+  return match ? match[1] : fallback;
+}
+
 export async function loadImportExport() {
   const el = document.getElementById('importexport-list');
   try {
@@ -43,6 +67,7 @@ function renderImportExportGrid(tables) {
         <button class="btn btn-sm" data-action="export">Export</button>
         <button class="btn btn-sm btn-ghost" data-action="sample">Download sample</button>
       </div>
+      <div class="ie-export-result"></div>
       <form class="ie-import-form">
         <label class="ie-import-label">Import from Excel</label>
         <div class="ie-import-row">
@@ -62,8 +87,53 @@ function renderImportExportGrid(tables) {
   el.querySelectorAll('.ie-card').forEach((card) => {
     const key = card.dataset.key;
 
-    card.querySelector('[data-action="export"]').addEventListener('click', () => {
-      window.open(`${API}/import-export/${key}/export`, '_blank');
+    const exportBtn = card.querySelector('[data-action="export"]');
+    const exportResultEl = card.querySelector('.ie-export-result');
+
+    exportBtn.addEventListener('click', async () => {
+      exportBtn.disabled = true;
+      exportResultEl.innerHTML = `<p class="hint">Exporting…</p>`;
+      try {
+        const res = await fetch(`${API}/import-export/${key}/export`);
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || `Export failed (${res.status})`);
+        }
+        const rowErrors = Number(res.headers.get('X-Row-Errors') || '0');
+        const filename = filenameFromContentDisposition(res.headers.get('Content-Disposition'), `${key}.xlsx`);
+        const blob = await res.blob();
+        downloadBlob(blob, filename);
+
+        if (rowErrors > 0) {
+          exportResultEl.innerHTML = `
+            <p class="hint">${rowErrors} row${rowErrors === 1 ? '' : 's'} could not be exported and ${rowErrors === 1 ? 'was' : 'were'} skipped.</p>
+            <button type="button" class="btn btn-sm btn-ghost" data-action="export-errors">Download error report</button>
+          `;
+          exportResultEl.querySelector('[data-action="export-errors"]').addEventListener('click', async (btnEvent) => {
+            const reportBtn = btnEvent.target;
+            reportBtn.disabled = true;
+            try {
+              const reportRes = await fetch(`${API}/import-export/${key}/export-errors`);
+              if (!reportRes.ok) throw new Error(`Could not build the error report (${reportRes.status})`);
+              const reportFilename = filenameFromContentDisposition(reportRes.headers.get('Content-Disposition'), `${key}-export-errors.xlsx`);
+              downloadBlob(await reportRes.blob(), reportFilename);
+            } catch (err) {
+              toast(err.message, 'error');
+            } finally {
+              reportBtn.disabled = false;
+            }
+          });
+          toast(`Exported with ${rowErrors} row(s) skipped`, 'error');
+        } else {
+          exportResultEl.innerHTML = '';
+          toast('Export complete', 'success');
+        }
+      } catch (err) {
+        exportResultEl.innerHTML = '';
+        toast(err.message, 'error');
+      } finally {
+        exportBtn.disabled = false;
+      }
     });
     card.querySelector('[data-action="sample"]').addEventListener('click', () => {
       window.open(`${API}/import-export/${key}/sample`, '_blank');
@@ -108,7 +178,13 @@ function renderImportExportGrid(tables) {
             ${body.failed ? `${body.failed} failed.` : ''}
           </p>
           ${body.errors.length ? `<ul class="ie-error-list">${body.errors.map((er) => `<li>Row ${er.row}: ${escapeHtml(er.message)}</li>`).join('')}</ul>` : ''}
+          ${body.errorReport ? `<button type="button" class="btn btn-sm btn-ghost" data-action="import-errors">Download error report</button>` : ''}
         `;
+        if (body.errorReport) {
+          resultEl.querySelector('[data-action="import-errors"]').addEventListener('click', () => {
+            downloadBase64(body.errorReport.base64, body.errorReport.filename);
+          });
+        }
         toast(body.failed ? `Imported with ${body.failed} error(s)` : 'Import complete', body.failed ? 'error' : 'success');
         form.reset();
         warning.classList.remove('show');
