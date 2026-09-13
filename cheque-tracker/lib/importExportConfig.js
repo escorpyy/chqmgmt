@@ -1,30 +1,45 @@
 // Central config for the Import / Export feature (see routes/importExport.js).
 //
+// Every table here is company-scoped (multi-tenant): all of Bank, Staff,
+// Party, CompanyBankAccount, FiscalYear, Cheque and IssuedCheque carry a
+// required companyId. This file mirrors that everywhere:
+//   - export(req):  reads only the signed-in user's currently selected
+//                 company (or every company they own, if "all" is selected)
+//                 — never the whole database across tenants.
+//   - importRow(row, companyId): creates the record under that one company,
+//                 and every name-based lookup (bank name -> bank, party
+//                 name -> party, etc.) is scoped to that same company, so
+//                 you can never accidentally match another company's data.
+//   - deleteAll(companyId): wipes only that company's rows in the table.
+//
 // Each entry describes one table as it should appear in Excel:
 //   - columns:    flat column headers, in order (relations are resolved to
 //                 their human-readable name, e.g. "bankName" not "bankId")
 //   - sampleRows: example row(s) used to build the "Download sample" file
-//   - export():   returns { rows, errors } — rows are flat row objects for
+//   - export(req): returns { rows, errors } — rows are flat row objects for
 //                 every record that converted cleanly; errors are records
 //                 that broke while being converted (e.g. a corrupt legacy
 //                 date), each with the best-effort row content plus a
 //                 plain-English and a technical explanation. A bad record
 //                 is skipped, not fatal to the whole export — see
 //                 makeExport() below.
-//   - importRow(row): validates one row and creates the record, resolving
-//                 any name-based lookups (bank name -> bankId, etc.). Throws
-//                 on a bad row; the caller (routes/importExport.js) catches
-//                 that per-row and moves on to the next one.
-//   - deleteAll(): wipes the table — used by the "delete existing, then
-//                 import" mode. FK-restricted relations will make this
-//                 throw if other records still reference the rows; that
-//                 error is surfaced to the user rather than swallowed.
+//   - importRow(row, companyId): validates one row and creates the record,
+//                 resolving any name-based lookups (bank name -> bankId,
+//                 etc.) within that company. Throws on a bad row; the
+//                 caller (routes/importExport.js) catches that per-row and
+//                 moves on to the next one.
+//   - deleteAll(companyId): wipes that company's rows in the table — used
+//                 by the "delete existing, then import" mode. FK-restricted
+//                 relations will make this throw if other records still
+//                 reference the rows; that error is surfaced to the user
+//                 rather than swallowed.
 //
 // This is deliberately separate from routes/*.js: those routes are the
 // normal app CRUD API (one record at a time, full validation). This file
 // is the bulk-loading counterpart used only by the Import / Export tab.
 import { prisma } from './prisma.js';
 import { deriveChequeType } from './chequeHelpers.js';
+import { companyWhere } from './companyScope.js';
 import {
   CHEQUE_STATUSES, ISSUED_STATUSES, PARTY_TYPES,
   isValidEnum, parseDateOrNull, isPositiveAmount,
@@ -43,7 +58,9 @@ function required(row, field, label = field) {
   return value.toString().trim();
 }
 
-// Case-insensitive lookup by a single field, e.g. findByName('bank', 'name', 'ABC Bank').
+// Case-insensitive lookup by a single field, scoped to whatever's passed in
+// extraWhere — always include companyId there so an import can never match
+// another company's bank/party/staff/account by name.
 async function findByField(model, field, value, extraWhere = {}) {
   if (!value) return null;
   const target = value.toString().trim().toLowerCase();
@@ -63,15 +80,17 @@ export function describeError(err) {
   if (/is required$/.test(message)) {
     nontechnical = 'A required field was left blank.';
   } else if (/was not found/.test(message)) {
-    nontechnical = 'This row refers to something (a bank, party, account, staff member, etc.) that doesn\'t exist yet in the system — add it first, or check for a typo in the name.';
+    nontechnical = 'This row refers to something (a bank, party, account, staff member, etc.) that doesn\'t exist yet in this company — add it first, or check for a typo in the name.';
   } else if (/must be one of/.test(message)) {
     nontechnical = 'One of the fields has a value that isn\'t one of the allowed options.';
   } else if (/must be a positive number/.test(message)) {
     nontechnical = 'The amount isn\'t a valid positive number.';
   } else if (/is not a valid date/.test(message) || /Invalid time value/.test(message)) {
     nontechnical = 'A date on this row couldn\'t be understood — check the format.';
+  } else if (/Argument `company` is missing/.test(message) || /Unknown argument `companyId`/.test(message)) {
+    nontechnical = 'This row is missing the company it belongs to — this is an app bug, not a problem with your file.';
   } else if (code === 'P2002') {
-    nontechnical = 'A record with this same value already exists (duplicate entry).';
+    nontechnical = 'A record with this same value already exists in this company (duplicate entry).';
   } else if (code === 'P2003') {
     nontechnical = 'This row is linked to another record that no longer exists.';
   } else {
@@ -85,15 +104,19 @@ export function describeError(err) {
   return { nontechnical, technical: technicalParts.join(' | ') };
 }
 
-// Builds a table's export() from a record fetcher plus a map of
-// column -> extractor function (rather than one big object literal), so
-// that if ONE column's extractor throws for ONE record (e.g. a corrupt
+// Builds a table's export(req) from a company-scoped record fetcher plus a
+// map of column -> extractor function (rather than one big object literal),
+// so that if ONE column's extractor throws for ONE record (e.g. a corrupt
 // stored date), only that record is dropped from the export and reported
 // as an error — the rest of the table still exports normally.
+//
+// fetchRecords receives the Prisma `where` fragment scoping to the caller's
+// selected company (or every company they own, for "all") — see
+// companyWhere() in lib/companyScope.js.
 function makeExport(fetchRecords, fields) {
   const columns = Object.keys(fields);
-  return async function exportTable() {
-    const records = await fetchRecords();
+  return async function exportTable(req) {
+    const records = await fetchRecords(companyWhere(req));
     const rows = [];
     const errors = [];
     for (const record of records) {
@@ -118,7 +141,6 @@ function makeExport(fetchRecords, fields) {
   };
 }
 
-
 export const TABLES = {
   banks: {
     label: 'Banks',
@@ -128,17 +150,17 @@ export const TABLES = {
       { name: 'Global IME Bank', branch: 'Bhairahawa' },
     ],
     export: makeExport(
-      () => prisma.bank.findMany({ orderBy: { name: 'asc' } }),
+      (companyFilter) => prisma.bank.findMany({ where: companyFilter, orderBy: { name: 'asc' } }),
       {
         name: (b) => b.name,
         branch: (b) => b.branch || '',
       },
     ),
-    async importRow(row) {
+    async importRow(row, companyId) {
       const name = required(row, 'name');
-      return prisma.bank.create({ data: { name, branch: row.branch ? row.branch.toString().trim() : null } });
+      return prisma.bank.create({ data: { name, branch: row.branch ? row.branch.toString().trim() : null, companyId } });
     },
-    async deleteAll() { await prisma.bank.deleteMany(); },
+    async deleteAll(companyId) { await prisma.bank.deleteMany({ where: { companyId } }); },
   },
 
   staff: {
@@ -146,17 +168,17 @@ export const TABLES = {
     columns: ['name', 'phone'],
     sampleRows: [{ name: 'Ram Sharma', phone: '9800000000' }],
     export: makeExport(
-      () => prisma.staff.findMany({ orderBy: { name: 'asc' } }),
+      (companyFilter) => prisma.staff.findMany({ where: companyFilter, orderBy: { name: 'asc' } }),
       {
         name: (s) => s.name,
         phone: (s) => s.phone || '',
       },
     ),
-    async importRow(row) {
+    async importRow(row, companyId) {
       const name = required(row, 'name');
-      return prisma.staff.create({ data: { name, phone: row.phone ? row.phone.toString().trim() : null } });
+      return prisma.staff.create({ data: { name, phone: row.phone ? row.phone.toString().trim() : null, companyId } });
     },
-    async deleteAll() { await prisma.staff.deleteMany(); },
+    async deleteAll(companyId) { await prisma.staff.deleteMany({ where: { companyId } }); },
   },
 
   parties: {
@@ -167,8 +189,8 @@ export const TABLES = {
       { type: 'INDIVIDUAL', name: 'Hari Bahadur Thapa', phone: '9800000001', address: 'Butwal', panNo: '', firmName: 'ABC Traders Pvt. Ltd.' },
     ],
     export: makeExport(
-      () => prisma.party.findMany({
-        where: { deletedAt: null },
+      (companyFilter) => prisma.party.findMany({
+        where: { ...companyFilter, deletedAt: null },
         include: { firm: true },
         orderBy: { name: 'asc' },
       }),
@@ -181,14 +203,14 @@ export const TABLES = {
         firmName: (p) => p.firm?.name || '',
       },
     ),
-    async importRow(row) {
+    async importRow(row, companyId) {
       const type = required(row, 'type');
       if (!isValidEnum(type, PARTY_TYPES)) throw new Error(`type must be one of: ${PARTY_TYPES.join(', ')}`);
       const name = required(row, 'name');
 
       let firmId = null;
       if (type === 'INDIVIDUAL' && row.firmName && row.firmName.toString().trim()) {
-        const firm = await findByField('party', 'name', row.firmName, { deletedAt: null, type: 'FIRM' });
+        const firm = await findByField('party', 'name', row.firmName, { companyId, deletedAt: null, type: 'FIRM' });
         if (!firm) throw new Error(`firmName "${row.firmName}" was not found among existing FIRM parties`);
         firmId = firm.id;
       }
@@ -201,10 +223,11 @@ export const TABLES = {
           address: row.address ? row.address.toString().trim() : null,
           panNo: row.panNo ? row.panNo.toString().trim() : null,
           firmId,
+          companyId,
         },
       });
     },
-    async deleteAll() { await prisma.party.deleteMany(); },
+    async deleteAll(companyId) { await prisma.party.deleteMany({ where: { companyId } }); },
   },
 
   companyBankAccounts: {
@@ -214,7 +237,8 @@ export const TABLES = {
       { bankName: 'Nepal Investment Mega Bank', accountName: 'B Enterprises Pvt. Ltd.', accountNumber: '00100123456', branch: 'Butwal' },
     ],
     export: makeExport(
-      () => prisma.companyBankAccount.findMany({
+      (companyFilter) => prisma.companyBankAccount.findMany({
+        where: companyFilter,
         include: { bank: true },
         orderBy: { accountName: 'asc' },
       }),
@@ -225,11 +249,11 @@ export const TABLES = {
         branch: (a) => a.branch || '',
       },
     ),
-    async importRow(row) {
+    async importRow(row, companyId) {
       const bankName = required(row, 'bankName');
       const accountName = required(row, 'accountName');
       const accountNumber = required(row, 'accountNumber');
-      const bank = await findByField('bank', 'name', bankName);
+      const bank = await findByField('bank', 'name', bankName, { companyId });
       if (!bank) throw new Error(`bankName "${bankName}" was not found — add it on the Banks tab first`);
       return prisma.companyBankAccount.create({
         data: {
@@ -237,10 +261,11 @@ export const TABLES = {
           accountName,
           accountNumber,
           branch: row.branch ? row.branch.toString().trim() : null,
+          companyId,
         },
       });
     },
-    async deleteAll() { await prisma.companyBankAccount.deleteMany(); },
+    async deleteAll(companyId) { await prisma.companyBankAccount.deleteMany({ where: { companyId } }); },
   },
 
   fiscalYears: {
@@ -248,14 +273,14 @@ export const TABLES = {
     columns: ['year'],
     sampleRows: [{ year: '2082/83' }],
     export: makeExport(
-      () => prisma.fiscalYear.findMany({ orderBy: { year: 'desc' } }),
+      (companyFilter) => prisma.fiscalYear.findMany({ where: companyFilter, orderBy: { year: 'desc' } }),
       { year: (r) => r.year },
     ),
-    async importRow(row) {
+    async importRow(row, companyId) {
       const year = required(row, 'year');
-      return prisma.fiscalYear.create({ data: { year } });
+      return prisma.fiscalYear.create({ data: { year, companyId } });
     },
-    async deleteAll() { await prisma.fiscalYear.deleteMany(); },
+    async deleteAll(companyId) { await prisma.fiscalYear.deleteMany({ where: { companyId } }); },
   },
 
   cheques: {
@@ -281,8 +306,8 @@ export const TABLES = {
       status: 'PENDING',
     }],
     export: makeExport(
-      () => prisma.cheque.findMany({
-        where: { deletedAt: null },
+      (companyFilter) => prisma.cheque.findMany({
+        where: { ...companyFilter, deletedAt: null },
         include: { fiscalYear: true, issuer: true, bank: true, presentedBank: true, staff: true },
         orderBy: { chqDate: 'desc' },
       }),
@@ -303,7 +328,7 @@ export const TABLES = {
         status: (c) => c.status,
       },
     ),
-    async importRow(row) {
+    async importRow(row, companyId) {
       const fiscalYearText = required(row, 'fiscalYear');
       const issuerName = required(row, 'issuerName');
       const issuedOn = required(row, 'issuedOn');
@@ -315,26 +340,26 @@ export const TABLES = {
       const parsedChqDate = parseDateOrNull(row.chqDate);
       if (!parsedChqDate) throw new Error('chqDate is not a valid date (use YYYY-MM-DD)');
 
-      const issuer = await findByField('party', 'name', issuerName, { deletedAt: null });
+      const issuer = await findByField('party', 'name', issuerName, { companyId, deletedAt: null });
       if (!issuer) throw new Error(`issuerName "${issuerName}" was not found — add it on the Parties tab first`);
-      const bank = await findByField('bank', 'name', bankName);
+      const bank = await findByField('bank', 'name', bankName, { companyId });
       if (!bank) throw new Error(`bankName "${bankName}" was not found — add it on the Banks tab first`);
 
       let presentedBank = null;
       if (row.presentedBankName && row.presentedBankName.toString().trim()) {
-        presentedBank = await findByField('bank', 'name', row.presentedBankName);
+        presentedBank = await findByField('bank', 'name', row.presentedBankName, { companyId });
         if (!presentedBank) throw new Error(`presentedBankName "${row.presentedBankName}" was not found`);
       }
 
       let staff = null;
       if (row.staffName && row.staffName.toString().trim()) {
-        staff = await findByField('staff', 'name', row.staffName);
+        staff = await findByField('staff', 'name', row.staffName, { companyId });
         if (!staff) throw new Error(`staffName "${row.staffName}" was not found`);
       }
 
-      let fiscalYear = await prisma.fiscalYear.findFirst({ where: { year: fiscalYearText } });
+      let fiscalYear = await prisma.fiscalYear.findFirst({ where: { year: fiscalYearText, companyId } });
       if (!fiscalYear) {
-        fiscalYear = await prisma.fiscalYear.create({ data: { year: fiscalYearText } });
+        fiscalYear = await prisma.fiscalYear.create({ data: { year: fiscalYearText, companyId } });
       }
 
       const status = (row.status && isValidEnum(row.status, CHEQUE_STATUSES) && row.status) || 'PENDING';
@@ -358,10 +383,11 @@ export const TABLES = {
           staffId: staff?.id || null,
           status,
           statusDate: parsedChqDate,
+          companyId,
         },
       });
     },
-    async deleteAll() { await prisma.cheque.deleteMany(); },
+    async deleteAll(companyId) { await prisma.cheque.deleteMany({ where: { companyId } }); },
   },
 
   issuedCheques: {
@@ -382,8 +408,8 @@ export const TABLES = {
       status: 'ISSUED',
     }],
     export: makeExport(
-      () => prisma.issuedCheque.findMany({
-        where: { deletedAt: null },
+      (companyFilter) => prisma.issuedCheque.findMany({
+        where: { ...companyFilter, deletedAt: null },
         include: { companyBankAccount: true, issuedBy: true },
         orderBy: { chqDate: 'desc' },
       }),
@@ -399,7 +425,7 @@ export const TABLES = {
         status: (c) => c.status,
       },
     ),
-    async importRow(row) {
+    async importRow(row, companyId) {
       const accountNumber = required(row, 'accountNumber');
       const chqNo = required(row, 'chqNo');
       const payeeName = required(row, 'payeeName');
@@ -409,19 +435,19 @@ export const TABLES = {
       const parsedChqDate = parseDateOrNull(row.chqDate);
       if (!parsedChqDate) throw new Error('chqDate is not a valid date (use YYYY-MM-DD)');
 
-      const account = await prisma.companyBankAccount.findFirst({ where: { accountNumber } });
+      const account = await prisma.companyBankAccount.findFirst({ where: { accountNumber, companyId } });
       if (!account) throw new Error(`accountNumber "${accountNumber}" was not found — add it on the Our accounts tab first`);
 
       let issuedBy = null;
       if (row.issuedByName && row.issuedByName.toString().trim()) {
-        issuedBy = await findByField('staff', 'name', row.issuedByName);
+        issuedBy = await findByField('staff', 'name', row.issuedByName, { companyId });
         if (!issuedBy) throw new Error(`issuedByName "${row.issuedByName}" was not found`);
       }
 
       // Optional soft-match: if a party with this exact name exists, link it —
       // otherwise payeeName is still stored as free text (matches how the
       // regular "New issued cheque" form treats an unlisted payee).
-      const payeeParty = await findByField('party', 'name', payeeName, { deletedAt: null });
+      const payeeParty = await findByField('party', 'name', payeeName, { companyId, deletedAt: null });
 
       const status = (row.status && isValidEnum(row.status, ISSUED_STATUSES) && row.status) || 'ISSUED';
 
@@ -439,10 +465,11 @@ export const TABLES = {
           issuedById: issuedBy?.id || null,
           status,
           statusDate: parsedChqDate,
+          companyId,
         },
       });
     },
-    async deleteAll() { await prisma.issuedCheque.deleteMany(); },
+    async deleteAll(companyId) { await prisma.issuedCheque.deleteMany({ where: { companyId } }); },
   },
 };
 
