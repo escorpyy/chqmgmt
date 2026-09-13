@@ -16,8 +16,14 @@ import { initAutocomplete } from './autocomplete.js';
 // rebuild). An ordinary single modal never pushes anything here, so
 // closeModal() behaves exactly as before in every other case.
 const modalStack = [];
+// Whether the modal currently on screen can be dismissed via the × button,
+// the backdrop, or Escape. Previously declared-but-unused by callers like
+// openCreateCompanyModal({ dismissable: false }) — this actually wires it
+// up, since a forced password-change modal needs it to genuinely hold.
+let dismissableFlag = true;
 
-export function openModal(titleHtml, bodyHtml, { onMount } = {}) {
+export function openModal(titleHtml, bodyHtml, { onMount, dismissable = true } = {}) {
+  dismissableFlag = dismissable;
   const content = document.getElementById('modal-content');
   const alreadyOpen = document.getElementById('modal').classList.contains('open');
   if (alreadyOpen && content.childNodes.length) {
@@ -26,19 +32,25 @@ export function openModal(titleHtml, bodyHtml, { onMount } = {}) {
   content.innerHTML = `
     <div class="modal-header">
       <h2>${titleHtml}</h2>
-      <button class="modal-close" id="modal-close-btn" aria-label="Close">×</button>
+      ${dismissable ? '<button class="modal-close" id="modal-close-btn" aria-label="Close">×</button>' : ''}
     </div>
     ${bodyHtml}
   `;
   document.getElementById('modal').classList.add('open');
   document.getElementById('modal-backdrop').classList.add('open');
-  document.getElementById('modal-close-btn').addEventListener('click', closeModal);
+  if (dismissable) {
+    document.getElementById('modal-close-btn').addEventListener('click', closeModal);
+  }
   initBsDatePickers(content);
   initEditableSelects(content); // converts master-table-backed <select>s into editable dropdowns
   initAutocomplete(content); // must run after the BS pickers above so date suggestion chips have somewhere to attach
   if (onMount) onMount();
 }
 
+// closeModal() itself always works when called directly (a form's own
+// successful-submit handler must be able to close its modal even when it
+// was opened non-dismissable) — only the passive dismiss paths below
+// (backdrop click, Escape) are gated by dismissableFlag.
 export function closeModal() {
   const content = document.getElementById('modal-content');
   if (modalStack.length) {
@@ -50,7 +62,15 @@ export function closeModal() {
   content.innerHTML = '';
 }
 
-document.getElementById('modal-backdrop').addEventListener('click', closeModal);
+document.getElementById('modal-backdrop').addEventListener('click', () => {
+  if (dismissableFlag) closeModal();
+});
+
+// So callers outside this module (main.js's global Escape handler) can
+// respect the same non-dismissable state without reaching into internals.
+export function isModalDismissable() {
+  return dismissableFlag;
+}
 
 export function formError(form, message) {
   const el = form.querySelector('.form-error');

@@ -7,13 +7,14 @@ import { API } from './constants.js';
 import { checkHealth, loadReferenceData } from './referenceData.js';
 import { loadDashboard } from './dashboard.js';
 import { toast } from './toast.js';
-import { closeModal } from './modal.js';
+import { closeModal, isModalDismissable } from './modal.js';
 import { closeDrawer } from './drawer.js';
 import { initBsDatePickers } from './bsDatePicker.js';
 import { initEditableSelects } from './combobox.js';
 import { initAutocomplete } from './autocomplete.js';
 import { initUsersTab } from './users.js';
 import { initCompanySwitcher } from './companySwitcher.js';
+import { forcePasswordChange } from './passwordChange.js';
 
 // ============================================================================
 // Auth gate — every other module below assumes a valid session, so this
@@ -58,7 +59,7 @@ function renderUserBadge(user) {
 // ============================================================================
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    closeModal();
+    if (isModalDismissable()) closeModal();
     closeDrawer();
   }
 });
@@ -69,6 +70,14 @@ document.addEventListener('keydown', (e) => {
 (async function init() {
   const user = await requireSession();
   if (!user) return; // already redirecting to login.html
+
+  // Blocks here, before anything else renders, when the server says this
+  // account's password must be changed (fresh admin install, or an
+  // admin-triggered reset) — nothing below assumes that's settled yet.
+  if (user.mustChangePassword) {
+    await forcePasswordChange();
+  }
+
   renderUserBadge(user);
 
   initBsDatePickers(document); // e.g. the daily-balance date picker, present at load

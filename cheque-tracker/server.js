@@ -6,6 +6,8 @@ import session from 'express-session';
 import connectPgSimple from 'connect-pg-simple';
 import pg from 'pg';
 import bcrypt from 'bcryptjs';
+import crypto from 'node:crypto';
+import rateLimit from 'express-rate-limit';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Prisma } from '@prisma/client';
@@ -33,16 +35,28 @@ import { startBackupScheduler } from './lib/backup.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function ensureDefaultAdmin() {
-  const passwordHash = await bcrypt.hash('admin', 10);
-  const admin = await prisma.user.upsert({
-    where: { username: 'admin' },
-    update: {},
-    create: { username: 'admin', passwordHash, role: 'ADMIN', isActive: true },
-    select: { username: true, role: true, isActive: true },
+  // Only acts on a genuinely fresh install — if "admin" already exists,
+  // this touches nothing (not even isActive/role), so a password someone
+  // already set is never overwritten by a restart.
+  const existing = await prisma.user.findUnique({ where: { username: 'admin' } });
+  if (existing) return;
+
+  // A random password beats a hardcoded "admin"/"admin" default that every
+  // fresh install would otherwise share — printed once, never stored in
+  // plaintext or logged again, and mustChangePassword forces it to be
+  // replaced before the account can be used for anything.
+  const rawPassword = crypto.randomBytes(9).toString('base64url');
+  const passwordHash = await bcrypt.hash(rawPassword, 10);
+  await prisma.user.create({
+    data: { username: 'admin', passwordHash, role: 'ADMIN', isActive: true, mustChangePassword: true },
   });
-  if (admin.role === 'ADMIN' && admin.isActive) {
-    console.log('Admin account ready: username "admin" (change the initial password in Users).');
-  }
+  console.log('============================================================');
+  console.log('Initial admin account created.');
+  console.log('  username: admin');
+  console.log(`  password: ${rawPassword}`);
+  console.log('This will not be shown again. You will be required to set a');
+  console.log('new password the first time you log in.');
+  console.log('============================================================');
 }
 
 if (!process.env.SESSION_SECRET) {
@@ -76,6 +90,19 @@ app.use(session({
 }));
 
 // ---- Routes reachable without a logged-in session -------------------------
+// Per-IP throttle on login specifically — the account-level lockout in
+// routes/auth.js is the real defense (it targets one account regardless of
+// which IP is attacking it); this just slows down a script trying many
+// different usernames from one source. 20 attempts / 15 min is generous
+// enough not to bother anyone fat-fingering their own password.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many login attempts from this address. Try again later.' },
+});
+app.use('/api/auth/login', loginLimiter);
 app.use('/api/auth', authRouter);
 app.get('/api/health', async (req, res) => {
   try {

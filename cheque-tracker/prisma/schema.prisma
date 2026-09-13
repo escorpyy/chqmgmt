@@ -565,6 +565,17 @@ model User {
   isActive     Boolean   @default(true)
   lastLoginAt  DateTime?
 
+  // Login brute-force protection: count resets to 0 on any successful
+  // login; hitting the threshold sets lockedUntil instead of growing
+  // forever, so the count itself never needs to be read past that point.
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+
+  // Forces the password-change modal on next login — set true for the
+  // auto-provisioned admin account's random initial password, and
+  // reusable later for any admin-triggered password reset.
+  mustChangePassword Boolean @default(false)
+
   companies    Company[]        // companies this user created/owns
   companyMemberships CompanyMember[] // companies this user was granted access to, without owning them
 

@@ -64,7 +64,10 @@ async function main() {
   if (password !== confirmation) throw new Error('Passwords do not match.');
 
   const passwordHash = await bcrypt.hash(password, 10);
-  await prisma.user.update({ where: { id: target.id }, data: { passwordHash } });
+  await prisma.user.update({
+    where: { id: target.id },
+    data: { passwordHash, failedLoginAttempts: 0, lockedUntil: null },
+  });
   console.log(`Password reset successfully for administrator "${target.username}".`);
 }
 

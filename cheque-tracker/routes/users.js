@@ -22,7 +22,9 @@ router.post('/', asyncHandler(async (req, res) => {
   }
   const passwordHash = await bcrypt.hash(password, 10);
   const user = await prisma.user.create({
-    data: { username, passwordHash, role: role === 'ADMIN' ? 'ADMIN' : 'STAFF' },
+    // An admin is choosing this password on the new user's behalf, same as
+    // a password reset below — force them to pick their own on first login.
+    data: { username, passwordHash, role: role === 'ADMIN' ? 'ADMIN' : 'STAFF', mustChangePassword: true },
     select: SAFE_FIELDS,
   });
   res.status(201).json(user);
@@ -50,6 +52,12 @@ router.patch('/:id', asyncHandler(async (req, res) => {
   if (password) {
     if (password.length < 8) return res.status(400).json({ error: 'password must be at least 8 characters' });
     data.passwordHash = await bcrypt.hash(password, 10);
+    // Same reasoning as on create: the admin chose this password, not the
+    // user, so force a change on their next login. Also clears any
+    // lockout — a reset password shouldn't stay locked out behind it.
+    data.mustChangePassword = true;
+    data.failedLoginAttempts = 0;
+    data.lockedUntil = null;
   }
 
   const user = await prisma.user.update({ where: { id: req.params.id }, data, select: SAFE_FIELDS });
