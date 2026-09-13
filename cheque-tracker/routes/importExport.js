@@ -2,7 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import XLSX from 'xlsx';
 import { asyncHandler } from '../lib/asyncHandler.js';
-import { TABLES, TABLE_KEYS } from '../lib/importExportConfig.js';
+import { TABLES, TABLE_KEYS, describeError } from '../lib/importExportConfig.js';
 
 const router = Router();
 
@@ -32,17 +32,45 @@ function sendWorkbook(res, filename, rows, columns) {
   res.send(buffer);
 }
 
+// Builds the "error report" workbook: one row per skipped record, with its
+// original column content (best-effort — a column that itself failed to
+// read shows as #ERROR) plus two extra columns explaining why it was
+// skipped: one in plain language, one with the technical detail.
+function sendErrorReport(res, filename, columns, errorEntries) {
+  const reportColumns = [...columns, 'What went wrong', 'Technical detail'];
+  const rows = errorEntries.map((e) => ({
+    ...columns.reduce((acc, col) => { acc[col] = e.raw?.[col] ?? ''; return acc; }, {}),
+    'What went wrong': e.nontechnical,
+    'Technical detail': e.technical,
+  }));
+  sendWorkbook(res, filename, rows, reportColumns);
+}
+
 // GET /api/import-export/tables — list of importable/exportable tables,
 // used to build the Import / Export tab without hardcoding it in the frontend.
 router.get('/tables', asyncHandler(async (req, res) => {
   res.json(TABLE_KEYS.map((key) => ({ key, label: TABLES[key].label, columns: TABLES[key].columns })));
 }));
 
-// GET /api/import-export/:table/export — download all current rows as .xlsx
+// GET /api/import-export/:table/export — download all current rows as .xlsx.
+// A record that fails to convert (e.g. a corrupt legacy date) is skipped
+// rather than failing the whole export; how many were skipped is reported
+// via the X-Row-Errors header so the frontend can offer the error report.
 router.get('/:table/export', asyncHandler(async (req, res) => {
   const table = getTable(req.params.table);
-  const rows = await table.export();
+  const { rows, errors } = await table.export();
+  res.setHeader('X-Row-Errors', String(errors.length));
+  res.setHeader('Access-Control-Expose-Headers', 'X-Row-Errors');
   sendWorkbook(res, `${req.params.table}.xlsx`, rows, table.columns);
+}));
+
+// GET /api/import-export/:table/export-errors — the skipped-rows report as
+// its own .xlsx, re-run against current data. Only meaningful right after
+// an /export that reported X-Row-Errors > 0.
+router.get('/:table/export-errors', asyncHandler(async (req, res) => {
+  const table = getTable(req.params.table);
+  const { errors } = await table.export();
+  sendErrorReport(res, `${req.params.table}-export-errors.xlsx`, table.columns, errors);
 }));
 
 // GET /api/import-export/:table/sample — download a template with example row(s)
@@ -107,8 +135,34 @@ router.post('/:table/import', upload.single('file'), asyncHandler(async (req, re
       await table.importRow(normalized);
       created += 1;
     } catch (err) {
-      errors.push({ row: sheetRowNumber, message: err.message || 'Unknown error' });
+      // One bad row (bad reference, duplicate key, bad enum value, whatever)
+      // never aborts the batch — it's recorded here and the loop moves on
+      // to the next row.
+      const desc = describeError(err);
+      errors.push({
+        row: sheetRowNumber,
+        raw: { 'Row #': sheetRowNumber, ...rows[i] },
+        ...desc,
+      });
     }
+  }
+
+  let errorReport = null;
+  if (errors.length) {
+    const reportColumns = ['Row #', ...table.columns];
+    const reportRows = errors.map((e) => ({
+      ...reportColumns.reduce((acc, col) => { acc[col] = e.raw?.[col] ?? ''; return acc; }, {}),
+      'What went wrong': e.nontechnical,
+      'Technical detail': e.technical,
+    }));
+    const worksheet = XLSX.utils.json_to_sheet(reportRows, { header: [...reportColumns, 'What went wrong', 'Technical detail'] });
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Errors');
+    const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+    errorReport = {
+      filename: `${req.params.table}-import-errors.xlsx`,
+      base64: buffer.toString('base64'),
+    };
   }
 
   res.json({
@@ -117,7 +171,8 @@ router.post('/:table/import', upload.single('file'), asyncHandler(async (req, re
     totalRows: rows.length,
     created,
     failed: errors.length,
-    errors: errors.slice(0, 50),
+    errors: errors.slice(0, 50).map((e) => ({ row: e.row, message: e.nontechnical })),
+    errorReport,
   });
 }));
 
