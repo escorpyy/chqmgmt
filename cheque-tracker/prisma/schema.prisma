@@ -107,12 +107,10 @@ enum PaymentMethod {
 }
 
 enum IssuedChequeStatus {
-  ISSUED      // handed to payee, not yet presented
-  FOLLOWUP    // in the follow-up/negotiation cycle after a bounce
-  ON_CHECK    // true status unknown — wasn't updated in time, needs manual re-verification
-  PRESENTED   // submitted by the payee to their bank
+  ISSUED      // handed to payee (or transfer initiated) — outcome not yet known
+  ON_CHECK    // true status unknown — set aside, excluded from balance deduction, needs manual re-verification
   CLEARED     // fully settled (via presentment OR partial payments)
-  RETURNED    // bounced/dishonored
+  RETURNED    // bounced/dishonored — may be followed up (see IssuedChequeFollowUp) and/or replaced
   STOPPED     // payment stopped/cancelled by us before clearing
 }
 
@@ -133,6 +131,16 @@ enum PartyType {
 enum ChequeType {
   ACCOUNT_PAYEE   // payee is a firm — crossed cheque, must clear through the payee's bank account
   BEARER          // payee is an individual — can be cashed directly
+}
+
+// Which of the three real-world reasons this payment went out — separate
+// from payeeType (firm/individual), since e.g. a cash withdrawal has no
+// meaningful firm/individual distinction at all.
+enum PayeeCategory {
+  SUPPLIER
+  STAFF
+  CASH
+  OTHER
 }
 
 model FiscalYear {
@@ -213,6 +221,7 @@ model Staff {
   payments  ChequePayment[]  @relation("PaymentRecordedBy")
 
   issuedCheques   IssuedCheque[]         @relation("IssuedBy")
+  authorizedCheques IssuedCheque[]       @relation("AuthorizedBy")
   issuedFollowUps IssuedChequeFollowUp[] @relation("IssuedFollowedUpBy")
   issuedPayments  IssuedChequePayment[]  @relation("IssuedPaymentRecordedBy")
 
@@ -237,7 +246,8 @@ model CompanyBankAccount {
   accountName   String   // legal name on the account, e.g. "B Enterprises Pvt. Ltd."
   accountNumber String   // unique per company, see @@unique below
   branch        String?
-  issuedCheques IssuedCheque[]
+  issuedCheques IssuedCheque[] @relation("SourceAccount")
+  transfersIn   IssuedCheque[] @relation("TransferDestination")
   dailyBalances DailyBankBalance[]
   deletedAt     DateTime? // soft delete — an account used on old issued cheques must never be hard-deleted
   createdAt     DateTime @default(now())
@@ -414,19 +424,42 @@ model IssuedCheque {
   company     Company             @relation(fields: [companyId], references: [id], onDelete: Restrict)
 
   companyBankAccountId String
-  companyBankAccount   CompanyBankAccount @relation(fields: [companyBankAccountId], references: [id], onDelete: Restrict)
+  companyBankAccount   CompanyBankAccount @relation("SourceAccount", fields: [companyBankAccountId], references: [id], onDelete: Restrict)
+
+  fiscalYearId String             // FY this payment is booked under, e.g. "2083/84" — mirrors Cheque.fiscalYearId
+  fiscalYear   FiscalYear         @relation(fields: [fiscalYearId], references: [id], onDelete: Restrict)
+  pvNo         String?            // Payment Voucher No. — free text, mirrors Cheque.receiptNo
 
   chqNo       String              // unique per our own account, see @@unique below
   chqDate     DateTime
 
-  payeeId     String?
-  payee       Party?              @relation("PayeeParty", fields: [payeeId], references: [id], onDelete: Restrict)
-  payeeName   String              // name actually written on the cheque (may differ from payee.name)
-  payeeType   PartyType           // is payeeName a firm or an individual?
-  chequeType  ChequeType          // derived from payeeType: FIRM -> ACCOUNT_PAYEE, INDIVIDUAL -> BEARER
+  // Exactly one of (payeeId/payeeName) or transferToAccountId is set — a
+  // cheque either pays an external party, or moves money between two of
+  // our own accounts, never both and never neither. Enforced both in
+  // application validation (routes/issuedCheques.js) and by a DB check
+  // constraint added via raw SQL below (Prisma has no CHECK syntax), so it
+  // can't drift even from a direct DB write.
+  payeeId       String?
+  payee         Party?              @relation("PayeeParty", fields: [payeeId], references: [id], onDelete: Restrict)
+  payeeName     String?             // name actually written on the cheque (may differ from payee.name) — null for a transfer
+  payeeType     PartyType?          // is payeeName a firm or an individual? — null for a transfer
+  payeeCategory PayeeCategory?      // SUPPLIER / STAFF / CASH / OTHER — null for a transfer
+
+  transferToAccountId String?
+  transferToAccount   CompanyBankAccount? @relation("TransferDestination", fields: [transferToAccountId], references: [id], onDelete: Restrict)
+
+  // Firm -> crossed/account-payee; individual -> bearer. A transfer to our
+  // own account is always account-payee (never bearer, since it's never
+  // meant to be cashed) — see the derivation in routes/issuedCheques.js.
+  chequeType  ChequeType
+
+  // Senior person who approved/directed this payment — distinct from
+  // issuedById below (who physically wrote/handed it over).
+  authorityId String?
+  authority   Staff?              @relation("AuthorizedBy", fields: [authorityId], references: [id], onDelete: Restrict)
 
   amount      Decimal             @db.Decimal(14, 2)
-  purpose     String?             // free-text note on what this payment is for
+  purpose     String?             // free-text note on what this payment is for (can reference a bill/invoice no.)
 
   status      IssuedChequeStatus  @default(ISSUED)
   statusDate  DateTime            @default(now())
@@ -440,10 +473,9 @@ model IssuedCheque {
 
   // Per-stage timestamps — same rationale as Cheque's: statusDate only ever
   // reflects the *current* status, these persist per stage regardless of
-  // where the cheque ends up later. There's no depositedAt on this side —
-  // the payee deposits our cheque, not us, so we have no reliable date for
-  // it. Set by app code in lib/chequeHelpers.js (issuedStageTimestampFields).
-  presentedAt DateTime?
+  // where the cheque ends up later. There's no depositedAt/presentedAt on
+  // this side — we only ever learn the final outcome (cleared or
+  // bounced/returned), never when the payee actually presented it.
   clearedAt   DateTime?
   bouncedAt   DateTime?  // stamped when status becomes RETURNED
   cancelledAt DateTime?  // stamped when status becomes STOPPED
@@ -471,8 +503,11 @@ model IssuedCheque {
   @@index([companyId])
   @@index([status, chqDate])
   @@index([chqDate])
+  @@index([fiscalYearId])
   @@index([payeeId])
   @@index([issuedById])
+  @@index([authorityId])
+  @@index([transferToAccountId])
   @@index([deletedAt])
 }
 

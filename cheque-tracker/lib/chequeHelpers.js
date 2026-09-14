@@ -31,11 +31,12 @@ export function receivedStageTimestampFields(status, date) {
 }
 
 // Same idea for issued cheques. No DEPOSITED case here — see the schema
-// note on IssuedCheque (we don't deposit our own issued cheques). STOPPED
-// is this side's "cancelled" status, so it stamps cancelledAt.
+// note on IssuedCheque (we don't deposit our own issued cheques), and no
+// PRESENTED case either — we never reliably know when a payee presents our
+// cheque, only the eventual outcome (CLEARED or RETURNED). STOPPED is this
+// side's "cancelled" status, so it stamps cancelledAt.
 export function issuedStageTimestampFields(status, date) {
   switch (status) {
-    case 'PRESENTED': return { presentedAt: date };
     case 'CLEARED': return { clearedAt: date };
     case 'RETURNED': return { bouncedAt: date };
     case 'STOPPED': return { cancelledAt: date };

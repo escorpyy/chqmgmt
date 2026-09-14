@@ -67,6 +67,7 @@ function renderDailyBalanceTable(rows, totals) {
             <td class="num">
               <input type="number" step="0.01" class="db-input" data-field="receivedToday"
                      value="${r.receivedToday}">
+              ${r.transferredIn ? `<div class="hint db-transfer-in" style="margin:0">+${fmtMoney(r.transferredIn)} transferred in</div>` : ''}
             </td>
             ${availableCell(r)}
           </tr>`).join('')}
@@ -76,7 +77,7 @@ function renderDailyBalanceTable(rows, totals) {
           <td>Total</td>
           <td class="num">${fmtMoney(totals.openingBalance)}</td>
           <td class="num">${fmtMoney(totals.chequesDue)}</td>
-          <td class="num">${fmtMoney(totals.receivedToday)}</td>
+          <td class="num">${fmtMoney(totals.receivedToday)}${totals.transferredIn ? `<div class="hint db-transfer-in" style="margin:0">+${fmtMoney(totals.transferredIn)} transferred in</div>` : ''}</td>
           <td class="num">${totals.allSet ? fmtMoney(totals.available) : '—'}</td>
         </tr>
       </tfoot>

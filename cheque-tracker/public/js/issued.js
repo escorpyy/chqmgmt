@@ -4,22 +4,84 @@ import { state } from './state.js';
 import { openModal, closeModal, formError, clearFormError, openConfirmModal } from './modal.js';
 import { openDrawer, closeDrawer } from './drawer.js';
 import { escapeHtml, fmtDate, fmtDateStacked, fmtMoney, fmtDateInput, humanize, statusTag, selectOptions, enumOptions, debounce, ageTag, paginationControls, wirePaginationControls } from './utils.js';
-import { ISSUED_STATUSES, ISSUED_FOLLOWUP_RESPONSES, RETURN_REASONS, PAYMENT_METHODS, CLEARANCE_METHODS, PARTY_TYPES } from './constants.js';
+import { ISSUED_STATUSES, ISSUED_FOLLOWUP_RESPONSES, RETURN_REASONS, PAYMENT_METHODS, CLEARANCE_METHODS, PARTY_TYPES, PAYEE_CATEGORIES } from './constants.js';
 import { loadDashboard } from './dashboard.js';
 import { syncEditableSelect } from './combobox.js';
+import { syncBsDatePicker } from './bsDatePicker.js';
 
 // ============================================================================
 // ISSUED CHEQUES
 // ============================================================================
 const PAGE_SIZE = 50;
 let issuedPage = 1;
+let fyFilterPopulated = false;
+const DEFAULT_ISSUED_SORT = [{ field: 'chqDate', dir: 'desc' }];
+// Same multi-level, 3-state sort stack as received.js — see the comments
+// there. Clicking a new column appends a tie-breaker level; clicking one
+// already in the stack toggles asc -> desc -> off. Only "Clear filters"
+// resets it.
+let issuedSort = DEFAULT_ISSUED_SORT.map((s) => ({ ...s }));
+
+// Column definitions for the sortable headers — label plus the backend
+// sort field (see the allowedFields list in routes/issuedCheques.js;
+// relation fields use dot notation, any depth — e.g.
+// "companyBankAccount.bank.name"). `null` field = not sortable.
+const ISSUED_COLUMNS = [
+  { label: 'Cheque no', field: 'chqNo' },
+  { label: 'Cheque date', field: 'chqDate' },
+  { label: 'Payee / vendor', field: 'payeeName' },
+  { label: 'Bank name', field: 'companyBankAccount.bank.name' },
+  { label: 'Amount', field: 'amount' },
+  { label: 'Status', field: 'status' },
+  { label: 'Status date', field: 'statusDate' },
+  { label: 'Days outstanding', field: 'totalDays' },
+  { label: 'Authority', field: null },
+  { label: 'Actions', field: null },
+];
+
+function sortableHeaderRow() {
+  return ISSUED_COLUMNS.map(({ label, field }) => {
+    if (!field) return `<th>${label}</th>`;
+    const level = issuedSort.findIndex((s) => s.field === field);
+    if (level === -1) return `<th class="sortable" data-sort-field="${field}">${label}</th>`;
+    const arrow = issuedSort[level].dir === 'asc' ? '▲' : '▼';
+    const badge = issuedSort.length > 1 ? `<sup>${level + 1}</sup>` : '';
+    return `<th class="sortable sort-active" data-sort-field="${field}">${label} ${arrow}${badge}</th>`;
+  }).join('');
+}
+
+// Same rationale as received.js's populateFyFilter — safe to call on
+// every load, only actually populates once per session.
+function populateFyFilter() {
+  const select = document.getElementById('issued-fy-filter');
+  if (fyFilterPopulated || !state.fiscalYears.length) return;
+  const current = select.value;
+  select.innerHTML = `<option value="">All fiscal years</option>` +
+    state.fiscalYears.map((f) => `<option value="${f.id}">${escapeHtml(f.year)}</option>`).join('');
+  select.value = current;
+  fyFilterPopulated = true;
+}
 
 export async function loadIssued(page = issuedPage) {
-  const search = document.getElementById('issued-search').value;
+  populateFyFilter();
+  const search = document.getElementById('issued-search').value.trim();
   const status = document.getElementById('issued-status-filter').value;
+  const fiscalYearId = document.getElementById('issued-fy-filter').value;
+  const dateFrom = document.getElementById('issued-date-from').value;
+  const dateTo = document.getElementById('issued-date-to').value;
+  const amountMin = document.getElementById('issued-amount-min').value;
+  const amountMax = document.getElementById('issued-amount-max').value;
+  const transfers = document.getElementById('issued-transfers-filter').value;
   const params = new URLSearchParams();
   if (search) params.set('search', search);
   if (status) params.set('status', status);
+  if (fiscalYearId) params.set('fiscalYearId', fiscalYearId);
+  if (dateFrom) params.set('dateFrom', dateFrom);
+  if (dateTo) params.set('dateTo', dateTo);
+  if (amountMin !== '') params.set('amountMin', amountMin);
+  if (amountMax !== '') params.set('amountMax', amountMax);
+  if (transfers) params.set('transfers', transfers);
+  params.set('sort', issuedSort.map((s) => `${s.field}:${s.dir}`).join(','));
   params.set('page', page);
   params.set('pageSize', PAGE_SIZE);
 
@@ -40,42 +102,63 @@ function renderIssuedTable(cheques, total, page) {
   }
   el.innerHTML = `
     <table class="ledger ledger-compact ledger-centered">
-      <thead><tr>
-        <th>Cheque no</th><th>Cheque date</th><th>Payee / vendor</th>
-        <th>Bank name</th><th>Amount</th>
-        <th>Status</th><th>Status date</th>
-        <th>Days outstanding</th><th>Actions</th>
-      </tr></thead>
+      <thead><tr>${sortableHeaderRow()}</tr></thead>
       <tbody>
         ${cheques.map((c) => {
-          // Days outstanding = chqDate -> statusDate, in whole days
-          // (c.totalDays, computed server-side and refreshed on every
-          // status change — see lib/chequeHelpers.js). Using this
-          // consistently for every status, not just CLEARED, so the
-          // number means the same thing throughout the register.
           const ageDays = c.totalDays;
+          const isTransfer = !!c.transferToAccountId;
           return `
           <tr data-id="${c.id}">
             <td class="num">${escapeHtml(c.chqNo)}</td>
             <td class="num">${fmtDateStacked(c.chqDate)}</td>
             <td>
-              <div>${escapeHtml(c.payeeName)}</div>
-              <div class="muted cell-sub cell-truncate" title="${escapeHtml(c.purpose || '')}">${escapeHtml(c.purpose || '—')}</div>
+              ${isTransfer
+                ? `<div>→ ${escapeHtml(c.transferToAccount?.accountName || '—')}<span class="muted cell-sub" style="display:inline"> (transfer)</span></div>`
+                : `<div>${escapeHtml(c.payeeName || '—')}</div>
+                   ${c.payeeType === 'INDIVIDUAL' && c.payee?.firm ? `<div class="muted cell-sub">${escapeHtml(c.payee.firm.name)}</div>` : ''}`}
+              <div class="muted cell-sub">${escapeHtml(c.pvNo || '—')}${c.purpose ? ` · ${escapeHtml(c.purpose)}` : ''}</div>
             </td>
             <td>
               <div>${escapeHtml(c.companyBankAccount?.bank?.name || '—')}</div>
-              <div class="muted cell-sub">${escapeHtml(c.companyBankAccount?.bank?.branch || '—')} · A/C: ${escapeHtml(c.companyBankAccount?.accountNumber || '—')}</div>
+              <div class="muted cell-sub">${escapeHtml(c.companyBankAccount?.accountName || '—')} · ${escapeHtml(c.companyBankAccount?.accountNumber || '—')}</div>
             </td>
             <td class="amount">${fmtMoney(c.amount)}</td>
             <td>${statusTag(c.status)}</td>
             <td class="num">${fmtDateStacked(c.statusDate)}</td>
             <td>${ageTag(ageDays)}</td>
+            <td>${escapeHtml(c.authority?.name || '—')}</td>
             <td><button type="button" class="btn btn-sm btn-ghost act-view" data-id="${c.id}">View</button></td>
           </tr>`;
         }).join('')}
       </tbody>
     </table>
     ${paginationControls(total, page, PAGE_SIZE)}`;
+  el.querySelectorAll('th[data-sort-field]').forEach((th) => {
+    th.addEventListener('click', () => {
+      const field = th.dataset.sortField;
+      const existing = issuedSort.find((s) => s.field === field);
+      let message;
+      if (!existing) {
+        issuedSort.push({ field, dir: 'asc' });
+        message = 'ascending';
+      } else if (existing.dir === 'asc') {
+        existing.dir = 'desc';
+        message = 'descending';
+      } else {
+        issuedSort = issuedSort.filter((s) => s.field !== field);
+        message = null;
+      }
+      const col = ISSUED_COLUMNS.find((c) => c.field === field);
+      if (message) {
+        const level = issuedSort.find((s) => s.field === field);
+        const levelNum = issuedSort.length > 1 ? ` (level ${issuedSort.indexOf(level) + 1})` : '';
+        toast(`Sorting by ${col.label} — ${message}${levelNum}`);
+      } else {
+        toast(`Stopped sorting by ${col.label}`);
+      }
+      loadIssued(1);
+    });
+  });
   el.querySelectorAll('tr[data-id]').forEach((row) => {
     row.addEventListener('click', (e) => {
       if (e.target.closest('.act-view')) return;
@@ -93,6 +176,30 @@ function renderIssuedTable(cheques, total, page) {
 
 document.getElementById('issued-search').addEventListener('input', debounce(() => loadIssued(1), 300));
 document.getElementById('issued-status-filter').addEventListener('change', () => loadIssued(1));
+document.getElementById('issued-fy-filter').addEventListener('change', () => loadIssued(1));
+document.getElementById('issued-date-from').addEventListener('change', () => loadIssued(1));
+document.getElementById('issued-date-to').addEventListener('change', () => loadIssued(1));
+document.getElementById('issued-amount-min').addEventListener('input', debounce(() => loadIssued(1), 300));
+document.getElementById('issued-amount-max').addEventListener('input', debounce(() => loadIssued(1), 300));
+document.getElementById('issued-transfers-filter').addEventListener('change', () => loadIssued(1));
+
+document.getElementById('btn-issued-clear-filters').addEventListener('click', () => {
+  document.getElementById('issued-search').value = '';
+  document.getElementById('issued-status-filter').value = '';
+  document.getElementById('issued-fy-filter').value = '';
+  document.getElementById('issued-amount-min').value = '';
+  document.getElementById('issued-amount-max').value = '';
+  document.getElementById('issued-transfers-filter').value = '';
+  const dateFrom = document.getElementById('issued-date-from');
+  const dateTo = document.getElementById('issued-date-to');
+  dateFrom.value = '';
+  dateTo.value = '';
+  syncBsDatePicker(dateFrom);
+  syncBsDatePicker(dateTo);
+  issuedSort = DEFAULT_ISSUED_SORT.map((s) => ({ ...s }));
+  toast('Filters and sorting cleared');
+  loadIssued(1);
+});
 
 document.getElementById('btn-new-issued').addEventListener('click', () => openNewIssuedModal());
 
@@ -101,9 +208,13 @@ function openNewIssuedModal() {
     <form id="form-new-issued">
       <div class="form-error"></div>
       <div class="form-grid">
-        <div class="field span-2">
+        <div class="field">
           <label>Our bank account *</label>
           <select name="companyBankAccountId" required>${selectOptions(state.accounts, 'id', (a) => `${a.accountName} — ${a.bank?.name || ''}`, 'Select account…')}</select>
+        </div>
+        <div class="field">
+          <label>Fiscal year *</label>
+          <select name="fiscalYearId" required>${selectOptions(state.fiscalYears, 'id', (f) => f.year, 'Select fiscal year…')}</select>
         </div>
         <div class="field">
           <label>Cheque no *</label>
@@ -113,29 +224,53 @@ function openNewIssuedModal() {
           <label>Cheque date *</label>
           <input name="chqDate" type="date" required>
         </div>
-        <div class="field span-2">
-          <label>Payee party (optional)</label>
-          <select name="payeeId">${selectOptions(state.parties, 'id', (p) => p.name, 'Not in party list')}</select>
-        </div>
         <div class="field">
-          <label>Payee name on cheque *</label>
-          <input name="payeeName" type="text" required>
-        </div>
-        <div class="field">
-          <label>Payee type *</label>
-          <select name="payeeType" required>${enumOptions(PARTY_TYPES)}</select>
+          <label>PV no.</label>
+          <input name="pvNo" type="text" placeholder="PV-1024">
         </div>
         <div class="field">
           <label>Amount *</label>
           <input name="amount" type="number" step="0.01" min="0.01" required>
         </div>
+        <div class="field span-2">
+          <label class="checkbox-field">
+            <input type="checkbox" id="is-transfer-toggle">
+            This is a transfer to another of our own accounts (not a payment to a payee)
+          </label>
+        </div>
+        <div id="payee-fields" class="field span-2" style="display:contents">
+          <div class="field span-2">
+            <label>Payee party (optional)</label>
+            <select name="payeeId">${selectOptions(state.parties, 'id', (p) => p.name, 'Not in party list')}</select>
+          </div>
+          <div class="field">
+            <label>Payee name on cheque *</label>
+            <input name="payeeName" type="text">
+          </div>
+          <div class="field">
+            <label>Payee type *</label>
+            <select name="payeeType">${enumOptions(PARTY_TYPES)}</select>
+          </div>
+          <div class="field">
+            <label>Payee category</label>
+            <select name="payeeCategory">${enumOptions(PAYEE_CATEGORIES, 'Not specified')}</select>
+          </div>
+        </div>
+        <div id="transfer-fields" class="field span-2" style="display:none">
+          <label>Transfer to account *</label>
+          <select name="transferToAccountId">${selectOptions(state.accounts, 'id', (a) => `${a.accountName} — ${a.bank?.name || ''}`, 'Select destination account…')}</select>
+        </div>
         <div class="field">
           <label>Issued by staff</label>
           <select name="issuedById">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
         </div>
+        <div class="field">
+          <label>Authority</label>
+          <select name="authorityId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
+        </div>
         <div class="field span-2">
           <label>Purpose</label>
-          <textarea name="purpose"></textarea>
+          <textarea name="purpose" placeholder="e.g. against bill no. 4521"></textarea>
         </div>
       </div>
       <div class="form-actions">
@@ -147,12 +282,40 @@ function openNewIssuedModal() {
   openModal('New issued cheque', body, {
     onMount: () => {
       const form = document.getElementById('form-new-issued');
+      const toggle = document.getElementById('is-transfer-toggle');
+      const payeeFields = document.getElementById('payee-fields');
+      const transferFields = document.getElementById('transfer-fields');
+      const payeeNameInput = form.querySelector('[name="payeeName"]');
+      const payeeTypeSelect = form.querySelector('[name="payeeType"]');
+      const transferToSelect = form.querySelector('[name="transferToAccountId"]');
+
+      const applyToggle = () => {
+        const isTransfer = toggle.checked;
+        payeeFields.style.display = isTransfer ? 'none' : 'contents';
+        transferFields.style.display = isTransfer ? '' : 'none';
+        payeeNameInput.required = !isTransfer;
+        payeeTypeSelect.required = !isTransfer;
+        transferToSelect.required = isTransfer;
+      };
+      toggle.addEventListener('change', applyToggle);
+      applyToggle();
+
       document.getElementById('cancel-new-issued').addEventListener('click', closeModal);
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         clearFormError(form);
         const data = Object.fromEntries(new FormData(form).entries());
-        if (!data.payeeId) delete data.payeeId;
+        delete data.__ignore;
+        if (toggle.checked) {
+          delete data.payeeId;
+          delete data.payeeName;
+          delete data.payeeType;
+          delete data.payeeCategory;
+        } else {
+          delete data.transferToAccountId;
+          if (!data.payeeId) delete data.payeeId;
+          if (!data.payeeCategory) delete data.payeeCategory;
+        }
         try {
           await api('/issued-cheques', { method: 'POST', body: JSON.stringify(data) });
           toast('Issued cheque recorded', 'success');
@@ -177,22 +340,20 @@ async function openIssuedDetail(id) {
 }
 
 // Log of "what happened when" for the drawer's Status history section.
-// Mirrors received.js's renderStatusHistory, but there's no depositedAt
-// here — issuedStageTimestampFields (lib/chequeHelpers.js) never sets one
-// for issued cheques, since we don't deposit our own outgoing cheques.
+// No presentedAt anymore — PRESENTED was dropped as a status entirely
+// (see the schema migration), we only ever learn the final outcome.
 function renderIssuedStatusHistory(c) {
   const stages = [
     { label: 'Issued', date: c.createdAt },
-    { label: 'Presented', date: c.presentedAt },
     { label: 'Cleared', date: c.clearedAt },
     { label: 'Returned', date: c.bouncedAt },
-    { label: 'Stopped', date: c.cancelledAt },
+    { label: 'Cancelled', date: c.cancelledAt },
   ].filter((s) => s.date).sort((a, b) => new Date(a.date) - new Date(b.date));
 
-  // FOLLOWUP/ON_CHECK don't stamp a dedicated stage column, so show the
-  // current status/statusDate explicitly in that case (same reasoning as
-  // the received-cheque version).
-  const currentIsUnstamped = !['PRESENTED', 'CLEARED', 'RETURNED', 'STOPPED'].includes(c.status);
+  // ON_CHECK doesn't stamp a dedicated stage column, so show the current
+  // status/statusDate explicitly in that case (same reasoning as the
+  // received-cheque version).
+  const currentIsUnstamped = !['CLEARED', 'RETURNED', 'STOPPED'].includes(c.status);
 
   if (!stages.length && !currentIsUnstamped) {
     return `<p class="timeline-empty">No status changes recorded yet.</p>`;
@@ -209,18 +370,19 @@ function renderIssuedStatusHistory(c) {
 }
 
 function renderIssuedDrawer(c) {
+  const isTransfer = !!c.transferToAccountId;
   const canFollowUp = c.status === 'RETURNED';
-  const canPay = !['CLEARED'].includes(c.status);
+  const canPay = !isTransfer && !['CLEARED'].includes(c.status);
   const canCheckLog = c.status !== 'ON_CHECK';
   const canReplace = c.status === 'RETURNED' && !c.replacedBy;
-  const canStop = ['ISSUED', 'FOLLOWUP'].includes(c.status);
+  const canStop = c.status === 'ISSUED';
   const openCheckLog = c.checkLogs.find((l) => !l.resolvedAt);
 
   const html = `
     <div class="drawer-header">
       <div>
         <h2>Issued cheque ${escapeHtml(c.chqNo)}</h2>
-        <p class="hint" style="margin-top:0.2rem">${escapeHtml(c.payeeName)} · ${fmtDate(c.chqDate)}</p>
+        <p class="hint" style="margin-top:0.2rem">${isTransfer ? `Transfer → ${escapeHtml(c.transferToAccount?.accountName || '—')}` : escapeHtml(c.payeeName || '—')} · ${fmtDate(c.chqDate)}</p>
       </div>
       <button class="drawer-close" id="drawer-close-btn" aria-label="Close">×</button>
     </div>
@@ -229,11 +391,19 @@ function renderIssuedDrawer(c) {
 
     <dl class="detail-grid">
       <div class="detail-field"><dt>Amount</dt><dd>Rs ${fmtMoney(c.amount)}</dd></div>
+      <div class="detail-field"><dt>Fiscal year</dt><dd>${escapeHtml(c.fiscalYear?.year || '—')}</dd></div>
+      ${c.pvNo ? `<div class="detail-field"><dt>PV no.</dt><dd class="num">${escapeHtml(c.pvNo)}</dd></div>` : ''}
       <div class="detail-field"><dt>Our account</dt><dd>${escapeHtml(c.companyBankAccount?.accountName || '—')}</dd></div>
       <div class="detail-field"><dt>Bank</dt><dd>${escapeHtml(c.companyBankAccount?.bank?.name || '—')}</dd></div>
+      ${isTransfer
+        ? `<div class="detail-field"><dt>Transfer to</dt><dd>${escapeHtml(c.transferToAccount?.accountName || '—')} (${escapeHtml(c.transferToAccount?.bank?.name || '—')})</dd></div>`
+        : `
       <div class="detail-field"><dt>Payee type</dt><dd>${humanize(c.payeeType)}</dd></div>
+      ${c.payeeCategory ? `<div class="detail-field"><dt>Payee category</dt><dd>${humanize(c.payeeCategory)}</dd></div>` : ''}
+      ${c.payeeType === 'INDIVIDUAL' && c.payee?.firm ? `<div class="detail-field"><dt>Supplier</dt><dd>${escapeHtml(c.payee.firm.name)}</dd></div>` : ''}`}
       <div class="detail-field"><dt>Cheque type</dt><dd>${humanize(c.chequeType)}</dd></div>
       <div class="detail-field"><dt>Issued by</dt><dd>${escapeHtml(c.issuedBy?.name || '—')}</dd></div>
+      <div class="detail-field"><dt>Authority</dt><dd>${escapeHtml(c.authority?.name || '—')}</dd></div>
       ${c.purpose ? `<div class="detail-field"><dt>Purpose</dt><dd>${escapeHtml(c.purpose)}</dd></div>` : ''}
       ${c.clearanceMethod ? `<div class="detail-field"><dt>Cleared via</dt><dd>${humanize(c.clearanceMethod)}</dd></div>` : ''}
       ${c.returnReason ? `<div class="detail-field"><dt>Return reason</dt><dd>${humanize(c.returnReason)}</dd></div>` : ''}
@@ -313,10 +483,19 @@ function wireIssuedActions(c) {
 }
 
 function openIssuedEditModal(c) {
+  const isTransfer = !!c.transferToAccountId;
   const body = `
     <form id="form-edit-issued">
       <div class="form-error"></div>
       <div class="form-grid">
+        <div class="field">
+          <label>Fiscal year *</label>
+          <select name="fiscalYearId" required>${selectOptions(state.fiscalYears, 'id', (f) => f.year, 'Select fiscal year…')}</select>
+        </div>
+        <div class="field">
+          <label>PV no.</label>
+          <input name="pvNo" type="text" value="${escapeHtml(c.pvNo || '')}">
+        </div>
         <div class="field">
           <label>Amount *</label>
           <input name="amount" type="number" step="0.01" min="0.01" required value="${escapeHtml(c.amount)}">
@@ -325,6 +504,15 @@ function openIssuedEditModal(c) {
           <label>Issued by staff</label>
           <select name="issuedById">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
         </div>
+        <div class="field">
+          <label>Authority</label>
+          <select name="authorityId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
+        </div>
+        ${!isTransfer ? `
+        <div class="field">
+          <label>Payee category</label>
+          <select name="payeeCategory">${enumOptions(PAYEE_CATEGORIES, 'Not specified')}</select>
+        </div>` : ''}
         <div class="field span-2">
           <label>Purpose</label>
           <textarea name="purpose">${escapeHtml(c.purpose || '')}</textarea>
@@ -346,10 +534,11 @@ function openIssuedEditModal(c) {
           <label>Our account *</label>
           <select name="companyBankAccountId" required>${selectOptions(state.accounts, 'id', (a) => `${a.accountName} — ${a.bank?.name || ''}`, 'Select account…')}</select>
         </div>
+        ${!isTransfer ? `
         <div class="field">
           <label>Payee type *</label>
           <select name="payeeType" required>${enumOptions(PARTY_TYPES)}</select>
-        </div>
+        </div>` : `<p class="hint">Payee type doesn't apply — this cheque is a transfer to ${escapeHtml(c.transferToAccount?.accountName || 'another of our accounts')}, which isn't editable after creation.</p>`}
       </div>
 
       <div class="form-actions">
@@ -360,21 +549,29 @@ function openIssuedEditModal(c) {
   openModal(`Edit issued cheque — ${escapeHtml(c.chqNo)}`, body, {
     onMount: () => {
       const form = document.getElementById('form-edit-issued');
+      form.querySelector('[name="fiscalYearId"]').value = c.fiscalYearId;
+      syncEditableSelect(form.querySelector('[name="fiscalYearId"]'));
       form.querySelector('[name="issuedById"]').value = c.issuedById || '';
       syncEditableSelect(form.querySelector('[name="issuedById"]'));
+      form.querySelector('[name="authorityId"]').value = c.authorityId || '';
+      syncEditableSelect(form.querySelector('[name="authorityId"]'));
       form.querySelector('[name="companyBankAccountId"]').value = c.companyBankAccountId;
       syncEditableSelect(form.querySelector('[name="companyBankAccountId"]'));
-      form.querySelector('[name="payeeType"]').value = c.payeeType;
+      if (!isTransfer) {
+        form.querySelector('[name="payeeCategory"]').value = c.payeeCategory || '';
+        form.querySelector('[name="payeeType"]').value = c.payeeType;
+      }
       document.getElementById('cancel-edit-issued').addEventListener('click', closeModal);
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         clearFormError(form);
         const data = Object.fromEntries(new FormData(form).entries());
+        if (!data.payeeCategory) delete data.payeeCategory;
 
         const riskyChanged = data.chqDate !== fmtDateInput(c.chqDate)
           || data.chqNo !== c.chqNo
           || data.companyBankAccountId !== c.companyBankAccountId
-          || data.payeeType !== c.payeeType;
+          || (!isTransfer && data.payeeType !== c.payeeType);
         if (riskyChanged) {
           const ok = await openConfirmModal(
             'Change risky fields?',

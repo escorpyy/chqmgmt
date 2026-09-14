@@ -56,9 +56,9 @@ const KINDS = {
     model: 'issuedCheque',
     label: 'Issued cheque',
     async find(where) {
-      return prisma.issuedCheque.findMany({ where, include: { payee: true }, orderBy: { deletedAt: 'desc' } });
+      return prisma.issuedCheque.findMany({ where, include: { payee: true, transferToAccount: true }, orderBy: { deletedAt: 'desc' } });
     },
-    describe: (r) => `#${r.chqNo} · ${r.payee?.name || '—'} · ${r.amount}`,
+    describe: (r) => `#${r.chqNo} · ${r.transferToAccount ? `→ ${r.transferToAccount.accountName}` : (r.payee?.name || r.payeeName || '—')} · ${r.amount}`,
   },
 };
 

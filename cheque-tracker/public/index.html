@@ -125,20 +125,54 @@
       <h2>Issued cheques</h2>
       <button class="btn btn-primary" id="btn-new-issued">+ New issued cheque</button>
     </div>
-    <div class="toolbar">
-      <input type="search" id="issued-search" placeholder="Search cheque no, payee, purpose…">
+    <!-- Mirrors the received-cheques filter bar exactly (see the comment
+         there) — search matches every visible column including the
+         payee's affiliated supplier name; date range is a single
+         dd/mm/yyyy BS text field (bsDatePicker.js text mode); amount range
+         is plain min/max. "transfers" additionally toggles between
+         everything, only inter-account transfers, or only external
+         payments. -->
+    <div class="received-filters">
+      <input type="search" id="issued-search" placeholder="Search cheque no, PV no, payee, bank, amount, status…">
       <select id="issued-status-filter">
         <option value="">All statuses</option>
         <option value="ISSUED">Issued</option>
-        <option value="FOLLOWUP">Follow-up</option>
         <option value="ON_CHECK">On check</option>
-        <option value="PRESENTED">Presented</option>
         <option value="CLEARED">Cleared</option>
         <option value="RETURNED">Returned</option>
-        <option value="STOPPED">Stopped</option>
+        <option value="STOPPED">Cancelled</option>
       </select>
+      <div class="date-range-filter">
+        <label for="issued-date-from" class="sr-only">Cheque date from (BS, dd/mm/yyyy)</label>
+        <div class="field">
+          <input type="date" id="issued-date-from" title="Cheque date from" data-bs-mode="text">
+        </div>
+        <span class="date-range-sep">to</span>
+        <label for="issued-date-to" class="sr-only">Cheque date to (BS, dd/mm/yyyy)</label>
+        <div class="field">
+          <input type="date" id="issued-date-to" title="Cheque date to" data-bs-mode="text">
+        </div>
+      </div>
+      <div class="amount-range-filter">
+        <label for="issued-amount-min" class="sr-only">Min amount</label>
+        <input type="number" id="issued-amount-min" placeholder="Min (Rs)" min="0" step="0.01" inputmode="decimal">
+        <span class="date-range-sep">–</span>
+        <label for="issued-amount-max" class="sr-only">Max amount</label>
+        <input type="number" id="issued-amount-max" placeholder="Max (Rs)" min="0" step="0.01" inputmode="decimal">
+      </div>
+      <select id="issued-fy-filter" class="fy-select">
+        <option value="">All fiscal years</option>
+      </select>
+      <select id="issued-transfers-filter" title="Filter by whether this is a transfer between our own accounts">
+        <option value="">Payments + transfers</option>
+        <option value="hide">Payments only</option>
+        <option value="only">Transfers only</option>
+      </select>
+      <button type="button" id="btn-issued-clear-filters" class="btn btn-ghost btn-sm" title="Reset search, filters and sorting">Clear</button>
     </div>
-    <div id="issued-table"></div>
+    <div class="received-table-wrap">
+      <div id="issued-table"></div>
+    </div>
   </section>
 
   <!-- DAILY BALANCE -->

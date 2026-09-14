@@ -19,11 +19,13 @@ function endOfDay(date) {
 
 // Builds the full per-account balance picture for one day:
 //   opening balance + received today (both manual, from DailyBankBalance)
+//   + transferred in today (automatic, from cleared account-to-account
+//     transfers landing on this account on this date)
 //   minus cheques due (computed live from IssuedCheque, not stored)
 async function computeBalances(date, scope) {
   const cutoff = endOfDay(date);
 
-  const [accounts, entries, dueByAccount] = await Promise.all([
+  const [accounts, entries, dueByAccount, transferredInByAccount] = await Promise.all([
     prisma.companyBankAccount.findMany({
       where: scope,
       include: { bank: true },
@@ -38,17 +40,34 @@ async function computeBalances(date, scope) {
       where: { chqDate: { lte: cutoff }, status: 'ISSUED', deletedAt: null, ...scope },
       _sum: { amount: true },
     }),
+    // Auto-credit for account-to-account transfers: only once a transfer
+    // actually clears (not the moment it's issued — the money isn't really
+    // there until then), and only for the day it cleared on, same as a
+    // manual "received today" entry rather than accumulating forever.
+    prisma.issuedCheque.groupBy({
+      by: ['transferToAccountId'],
+      where: {
+        transferToAccountId: { not: null },
+        status: 'CLEARED',
+        clearedAt: { gte: date, lte: cutoff },
+        deletedAt: null,
+        ...scope,
+      },
+      _sum: { amount: true },
+    }),
   ]);
 
   const entryByAccount = new Map(entries.map((e) => [e.companyBankAccountId, e]));
   const dueMap = new Map(dueByAccount.map((d) => [d.companyBankAccountId, Number(d._sum.amount || 0)]));
+  const transferredInMap = new Map(transferredInByAccount.map((t) => [t.transferToAccountId, Number(t._sum.amount || 0)]));
 
   const rows = accounts.map((account) => {
     const entry = entryByAccount.get(account.id) || null;
     const openingBalance = entry ? Number(entry.openingBalance) : null;
     const receivedToday = entry ? Number(entry.receivedToday) : 0;
     const chequesDue = dueMap.get(account.id) || 0;
-    const available = openingBalance === null ? null : (openingBalance - chequesDue + receivedToday);
+    const transferredIn = transferredInMap.get(account.id) || 0;
+    const available = openingBalance === null ? null : (openingBalance - chequesDue + receivedToday + transferredIn);
 
     return {
       companyBankAccountId: account.id,
@@ -58,6 +77,7 @@ async function computeBalances(date, scope) {
       openingBalanceSet: openingBalance !== null,
       openingBalance: openingBalance || 0,
       receivedToday,
+      transferredIn,
       chequesDue,
       available,
     };
@@ -66,10 +86,11 @@ async function computeBalances(date, scope) {
   const totals = rows.reduce((acc, r) => ({
     openingBalance: acc.openingBalance + (r.openingBalanceSet ? r.openingBalance : 0),
     receivedToday: acc.receivedToday + r.receivedToday,
+    transferredIn: acc.transferredIn + r.transferredIn,
     chequesDue: acc.chequesDue + r.chequesDue,
     available: acc.available + (r.available === null ? 0 : r.available),
     allSet: acc.allSet && r.openingBalanceSet,
-  }), { openingBalance: 0, receivedToday: 0, chequesDue: 0, available: 0, allSet: rows.length > 0 });
+  }), { openingBalance: 0, receivedToday: 0, transferredIn: 0, chequesDue: 0, available: 0, allSet: rows.length > 0 });
 
   return { date: date.toISOString().slice(0, 10), rows, totals };
 }
@@ -130,6 +151,7 @@ router.get('/export', asyncHandler(async (req, res) => {
     { header: 'Opening Balance', key: 'openingBalance', width: 18 },
     { header: 'Cheques Due', key: 'chequesDue', width: 18 },
     { header: 'Received Today', key: 'receivedToday', width: 18 },
+    { header: 'Transferred In Today', key: 'transferredIn', width: 20 },
     { header: 'Available Balance', key: 'available', width: 20 },
   ];
   sheet.getRow(1).font = { bold: true };
@@ -142,6 +164,7 @@ router.get('/export', asyncHandler(async (req, res) => {
       openingBalance: r.openingBalanceSet ? r.openingBalance : null,
       chequesDue: r.chequesDue,
       receivedToday: r.receivedToday,
+      transferredIn: r.transferredIn,
       available: r.available,
     });
   }
@@ -151,11 +174,12 @@ router.get('/export', asyncHandler(async (req, res) => {
     openingBalance: totals.openingBalance,
     chequesDue: totals.chequesDue,
     receivedToday: totals.receivedToday,
+    transferredIn: totals.transferredIn,
     available: totals.available,
   });
   totalRow.font = { bold: true };
 
-  ['openingBalance', 'chequesDue', 'receivedToday', 'available'].forEach((key) => {
+  ['openingBalance', 'chequesDue', 'receivedToday', 'transferredIn', 'available'].forEach((key) => {
     sheet.getColumn(key).numFmt = '#,##0.00;(#,##0.00)';
   });
 

@@ -221,7 +221,10 @@ export const TABLES = {
           name,
           phone: row.phone ? row.phone.toString().trim() : null,
           address: row.address ? row.address.toString().trim() : null,
-          panNo: row.panNo ? row.panNo.toString().trim() : null,
+          // Same rule as the regular Parties form: PAN only ever lives
+          // directly on a FIRM — an individual's PAN, if any, comes from
+          // their affiliated firm instead, never entered on them directly.
+          panNo: type === 'FIRM' && row.panNo ? row.panNo.toString().trim() : null,
           firmId,
           companyId,
         },
@@ -393,11 +396,13 @@ export const TABLES = {
   issuedCheques: {
     label: 'Issued cheques',
     columns: [
-      'accountNumber', 'chqDate', 'chqNo', 'payeeName', 'payeeType',
+      'accountNumber', 'fiscalYear', 'pvNo', 'chqDate', 'chqNo', 'payeeName', 'payeeType',
       'amount', 'purpose', 'issuedByName', 'status',
     ],
     sampleRows: [{
       accountNumber: '00100123456',
+      fiscalYear: '2082/83',
+      pvNo: 'PV-1024',
       chqDate: '2082-04-01',
       chqNo: '9876543',
       payeeName: 'ABC Traders Pvt. Ltd.',
@@ -410,23 +415,30 @@ export const TABLES = {
     export: makeExport(
       (companyFilter) => prisma.issuedCheque.findMany({
         where: { ...companyFilter, deletedAt: null },
-        include: { companyBankAccount: true, issuedBy: true },
+        include: { companyBankAccount: true, fiscalYear: true, issuedBy: true },
         orderBy: { chqDate: 'desc' },
       }),
       {
         accountNumber: (c) => c.companyBankAccount?.accountNumber || '',
+        fiscalYear: (c) => c.fiscalYear?.year || '',
+        pvNo: (c) => c.pvNo || '',
         chqDate: (c) => excelDate(c.chqDate),
         chqNo: (c) => c.chqNo,
-        payeeName: (c) => c.payeeName,
-        payeeType: (c) => c.payeeType,
+        payeeName: (c) => c.payeeName || '',
+        payeeType: (c) => c.payeeType || '',
         amount: (c) => Number(c.amount),
         purpose: (c) => c.purpose || '',
         issuedByName: (c) => c.issuedBy?.name || '',
         status: (c) => c.status,
       },
     ),
+    // Bulk import only creates ordinary payee cheques, not account-to-account
+    // transfers — a transfer has no payee/payeeType at all to fill in from a
+    // flat spreadsheet row, and is rare enough to not be worth a bulk path
+    // yet. Use the "New issued cheque" form's transfer toggle for those.
     async importRow(row, companyId) {
       const accountNumber = required(row, 'accountNumber');
+      const fiscalYearText = required(row, 'fiscalYear');
       const chqNo = required(row, 'chqNo');
       const payeeName = required(row, 'payeeName');
       const payeeType = required(row, 'payeeType');
@@ -437,6 +449,14 @@ export const TABLES = {
 
       const account = await prisma.companyBankAccount.findFirst({ where: { accountNumber, companyId } });
       if (!account) throw new Error(`accountNumber "${accountNumber}" was not found — add it on the Our accounts tab first`);
+
+      // Same find-or-create pattern as the received-cheques import above —
+      // fiscalYearId became a required field on IssuedCheque, so every row
+      // needs one.
+      let fiscalYear = await prisma.fiscalYear.findFirst({ where: { year: fiscalYearText, companyId } });
+      if (!fiscalYear) {
+        fiscalYear = await prisma.fiscalYear.create({ data: { year: fiscalYearText, companyId } });
+      }
 
       let issuedBy = null;
       if (row.issuedByName && row.issuedByName.toString().trim()) {
@@ -454,6 +474,8 @@ export const TABLES = {
       return prisma.issuedCheque.create({
         data: {
           companyBankAccountId: account.id,
+          fiscalYearId: fiscalYear.id,
+          pvNo: row.pvNo ? row.pvNo.toString().trim() : null,
           chqNo,
           chqDate: parsedChqDate,
           payeeId: payeeParty?.id || null,

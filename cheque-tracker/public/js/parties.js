@@ -42,7 +42,7 @@ function renderPartiesTable(parties) {
             <td>${humanize(p.type)}</td>
             <td class="num">${escapeHtml(p.phone || '—')}</td>
             <td>${escapeHtml(p.firm?.name || '—')}</td>
-            <td class="num">${escapeHtml(p.panNo || '—')}</td>
+            <td class="num">${escapeHtml(p.panNo || p.firm?.panNo || '—')}</td>
             <td class="num">${(p._count?.cheques || 0) + (p._count?.paidCheques || 0)}</td>
             <td class="row-actions">
               <div class="row-actions-group">
@@ -74,6 +74,7 @@ document.getElementById('party-type-filter').addEventListener('change', loadPart
 document.getElementById('party-show-deleted').addEventListener('change', loadParties);
 
 function openEditPartyModal(party) {
+  const isIndividual = party.type === 'INDIVIDUAL';
   const body = `
     <form id="form-edit-party">
       <div class="form-error"></div>
@@ -90,13 +91,19 @@ function openEditPartyModal(party) {
           <label>Phone</label>
           <input name="phone" type="text" value="${escapeHtml(party.phone || '')}">
         </div>
-        <div class="field">
-          <label>PAN no.</label>
-          <input name="panNo" type="text" value="${escapeHtml(party.panNo || '')}">
-        </div>
+        ${isIndividual
+          ? `<div class="field">
+               <label>PAN no.</label>
+               <input type="text" id="edit-party-pan-display" value="${escapeHtml(party.firm?.panNo || 'No affiliated firm')}" disabled>
+               <span class="hint">An individual's PAN comes from their affiliated firm, not entered directly here.</span>
+             </div>`
+          : `<div class="field">
+               <label>PAN no.</label>
+               <input name="panNo" type="text" value="${escapeHtml(party.panNo || '')}">
+             </div>`}
         <div class="field span-2">
           <label>Affiliated firm (if individual)</label>
-          <select name="firmId" ${party.type === 'FIRM' ? 'disabled' : ''}>${selectOptions(state.parties.filter((p) => p.type === 'FIRM' && p.id !== party.id), 'id', (f) => f.name, 'None')}</select>
+          <select name="firmId" id="edit-party-firm" ${party.type === 'FIRM' ? 'disabled' : ''}>${selectOptions(state.parties.filter((p) => p.type === 'FIRM' && p.id !== party.id), 'id', (f) => f.name, 'None')}</select>
         </div>
         <div class="field span-2">
           <label>Address</label>
@@ -113,6 +120,13 @@ function openEditPartyModal(party) {
       const form = document.getElementById('form-edit-party');
       form.querySelector('[name="firmId"]').value = party.firmId || '';
       syncEditableSelect(form.querySelector('[name="firmId"]'));
+      if (isIndividual) {
+        const panDisplay = document.getElementById('edit-party-pan-display');
+        document.getElementById('edit-party-firm').addEventListener('change', (e) => {
+          const firm = state.parties.find((p) => p.id === e.target.value);
+          panDisplay.value = firm?.panNo || 'No affiliated firm';
+        });
+      }
       document.getElementById('cancel-edit-party').addEventListener('click', closeModal);
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -170,7 +184,7 @@ export function openNewPartyModal({ name = '', type = '', onCreated } = {}) {
       <div class="form-grid">
         <div class="field">
           <label>Type *</label>
-          <select name="type" required ${type ? 'disabled' : ''}>${enumOptions(PARTY_TYPES)}</select>
+          <select name="type" id="new-party-type" required ${type ? 'disabled' : ''}>${enumOptions(PARTY_TYPES)}</select>
         </div>
         <div class="field">
           <label>Name *</label>
@@ -180,13 +194,16 @@ export function openNewPartyModal({ name = '', type = '', onCreated } = {}) {
           <label>Phone</label>
           <input name="phone" type="text">
         </div>
-        <div class="field">
+        <div class="field" id="new-party-pan-field">
           <label>PAN no.</label>
           <input name="panNo" type="text">
         </div>
         <div class="field span-2">
           <label>Affiliated firm (if individual)</label>
-          <select name="firmId">${selectOptions(state.parties.filter((p) => p.type === 'FIRM'), 'id', (f) => f.name, 'None')}</select>
+          <select name="firmId" id="new-party-firm">${selectOptions(state.parties.filter((p) => p.type === 'FIRM'), 'id', (f) => f.name, 'None')}</select>
+          <!-- Only shown for an individual — a firm's PAN doesn't come
+               from anywhere else, so there's nothing to inherit for it. -->
+          <span class="hint" id="new-party-firm-pan"></span>
         </div>
         <div class="field span-2">
           <label>Address</label>
@@ -202,6 +219,28 @@ export function openNewPartyModal({ name = '', type = '', onCreated } = {}) {
     onMount: () => {
       const form = document.getElementById('form-new-party');
       if (type) form.querySelector('[name="type"]').value = type;
+
+      // An individual doesn't get their own PAN field — most individuals
+      // have none, and when they do act for a firm, that firm's own PAN is
+      // the one that matters. Show it read-only instead, once a firm is
+      // picked, rather than asking for a redundant PAN entry here.
+      const typeSelect = document.getElementById('new-party-type');
+      const panField = document.getElementById('new-party-pan-field');
+      const firmSelect = document.getElementById('new-party-firm');
+      const firmPanHint = document.getElementById('new-party-firm-pan');
+      const updateFirmPanHint = () => {
+        const firm = state.parties.find((p) => p.id === firmSelect.value);
+        firmPanHint.textContent = firm?.panNo ? `Firm PAN: ${firm.panNo}` : '';
+      };
+      const applyTypeToggle = () => {
+        const isIndividual = typeSelect.value === 'INDIVIDUAL';
+        panField.style.display = isIndividual ? 'none' : '';
+        updateFirmPanHint();
+      };
+      typeSelect.addEventListener('change', applyTypeToggle);
+      firmSelect.addEventListener('change', updateFirmPanHint);
+      applyTypeToggle();
+
       document.getElementById('cancel-new-party').addEventListener('click', () => { closeModal(); onCreated?.(null); });
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -209,6 +248,7 @@ export function openNewPartyModal({ name = '', type = '', onCreated } = {}) {
         const data = Object.fromEntries(new FormData(form).entries());
         if (type) data.type = type; // disabled fields are excluded from FormData
         if (!data.firmId) delete data.firmId;
+        if (data.type === 'INDIVIDUAL') delete data.panNo; // comes from the firm, not entered here
         try {
           const party = await api('/parties', { method: 'POST', body: JSON.stringify(data) });
           toast('Party saved', 'success');

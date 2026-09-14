@@ -4,7 +4,7 @@ import { asyncHandler } from '../lib/asyncHandler.js';
 import { computeTotalDays, deriveChequeType, issuedStageTimestampFields } from '../lib/chequeHelpers.js';
 import {
   ISSUED_STATUSES, CLEARANCE_METHODS, ISSUED_FOLLOWUP_RESPONSES, RETURN_REASONS,
-  PAYMENT_METHODS, PARTY_TYPES, isValidEnum, parseDateOrNull, isPositiveAmount,
+  PAYMENT_METHODS, PARTY_TYPES, PAYEE_CATEGORIES, isValidEnum, parseDateOrNull, isPositiveAmount,
 } from '../lib/enums.js';
 import { companyWhere, requireSingleCompany } from '../lib/companyScope.js';
 import { parsePagination, statusWhereFragment, parseSort } from '../lib/listQuery.js';
@@ -12,9 +12,12 @@ import { parsePagination, statusWhereFragment, parseSort } from '../lib/listQuer
 const router = Router();
 
 const issuedInclude = {
+  fiscalYear: true,
   companyBankAccount: { include: { bank: true } },
-  payee: true,
+  transferToAccount: { include: { bank: true } },
+  payee: { include: { firm: true } },
   issuedBy: true,
+  authority: true,
   followUps: { orderBy: { followUpDate: 'desc' } },
   payments: { orderBy: { paymentDate: 'desc' } },
   checkLogs: { orderBy: { raisedAt: 'desc' } },
@@ -22,31 +25,99 @@ const issuedInclude = {
   replacedBy: true,
 };
 
+// A cheque either pays an external party, or transfers between two of our
+// own accounts — never both, never neither (also enforced by a DB CHECK
+// constraint, so this is belt-and-suspenders, not the only guard).
+function isTransfer(transferToAccountId) {
+  return !!transferToAccountId;
+}
+
 // GET /api/issued-cheques?status=ISSUED&search=abc&page=1&pageSize=50
+// status may be a comma-separated list; sort is a comma-separated stack of
+// "field:asc|desc". dateFrom/dateTo filter on chqDate (inclusive), either
+// end optional. Mirrors routes/cheques.js's filter shape so both ledgers
+// behave identically.
 router.get('/', asyncHandler(async (req, res) => {
-  const { status, search, includeDeleted, sort } = req.query;
+  const { status, search, includeDeleted, sort, fiscalYearId, dateFrom, dateTo, amountMin, amountMax, transfers } = req.query;
   const { page, pageSize, skip, take } = parsePagination(req.query);
+
+  const parsedFrom = parseDateOrNull(dateFrom);
+  const parsedTo = parseDateOrNull(dateTo);
+  if ((dateFrom !== undefined && dateFrom !== '' && !parsedFrom)
+    || (dateTo !== undefined && dateTo !== '' && !parsedTo)) {
+    return res.status(400).json({ error: 'dateFrom and dateTo must be valid dates' });
+  }
+  const hasAmountMin = amountMin !== undefined && amountMin !== '';
+  const hasAmountMax = amountMax !== undefined && amountMax !== '';
+  const parsedAmountMin = hasAmountMin ? Number(amountMin) : null;
+  const parsedAmountMax = hasAmountMax ? Number(amountMax) : null;
+  if ((hasAmountMin && (!Number.isFinite(parsedAmountMin) || parsedAmountMin < 0))
+    || (hasAmountMax && (!Number.isFinite(parsedAmountMax) || parsedAmountMax < 0))) {
+    return res.status(400).json({ error: 'amountMin and amountMax must be non-negative numbers' });
+  }
+  if (parsedAmountMin !== null && parsedAmountMax !== null && parsedAmountMin > parsedAmountMax) {
+    return res.status(400).json({ error: 'amountMin cannot be greater than amountMax' });
+  }
+  // A date-only query parameter parses at midnight. Use an exclusive upper
+  // bound for dateTo so records at any time on the selected end date match.
+  const exclusiveTo = parsedTo ? new Date(parsedTo) : null;
+  if (exclusiveTo) exclusiveTo.setUTCDate(exclusiveTo.getUTCDate() + 1);
+
+  const trimmedSearch = search ? String(search).trim() : '';
+  const numericSearch = trimmedSearch !== '' && !isNaN(Number(trimmedSearch)) ? Number(trimmedSearch) : null;
+  const matchedStatuses = trimmedSearch
+    ? ISSUED_STATUSES.filter((s) => s.replace(/_/g, ' ').toLowerCase().includes(trimmedSearch.toLowerCase()))
+    : [];
 
   const where = {
     ...companyWhere(req),
     ...(includeDeleted === 'true' ? {} : { deletedAt: null }),
     ...statusWhereFragment(status, ISSUED_STATUSES),
-    ...(search
+    ...(fiscalYearId ? { fiscalYearId } : {}),
+    // transfers=only / transfers=hide toggles the register between "just
+    // the inter-account movement" and "everything except that" — omitted,
+    // both show together as today.
+    ...(transfers === 'only' ? { transferToAccountId: { not: null } } : {}),
+    ...(transfers === 'hide' ? { transferToAccountId: null } : {}),
+    ...((parsedFrom || exclusiveTo)
+      ? { chqDate: { ...(parsedFrom ? { gte: parsedFrom } : {}), ...(exclusiveTo ? { lt: exclusiveTo } : {}) } }
+      : {}),
+    ...((parsedAmountMin !== null || parsedAmountMax !== null)
+      ? { amount: { ...(parsedAmountMin !== null ? { gte: parsedAmountMin } : {}), ...(parsedAmountMax !== null ? { lte: parsedAmountMax } : {}) } }
+      : {}),
+    ...(trimmedSearch
       ? {
           OR: [
-            { chqNo: { contains: search, mode: 'insensitive' } },
-            { payeeName: { contains: search, mode: 'insensitive' } },
-            { purpose: { contains: search, mode: 'insensitive' } },
+            { chqNo: { contains: trimmedSearch, mode: 'insensitive' } },
+            { pvNo: { contains: trimmedSearch, mode: 'insensitive' } },
+            { purpose: { contains: trimmedSearch, mode: 'insensitive' } },
+            { payeeName: { contains: trimmedSearch, mode: 'insensitive' } },
+            { payee: { firm: { name: { contains: trimmedSearch, mode: 'insensitive' } } } },
+            { companyBankAccount: { bank: { name: { contains: trimmedSearch, mode: 'insensitive' } } } },
+            { companyBankAccount: { accountName: { contains: trimmedSearch, mode: 'insensitive' } } },
+            { transferToAccount: { accountName: { contains: trimmedSearch, mode: 'insensitive' } } },
+            ...(numericSearch !== null ? [{ amount: numericSearch }] : []),
+            ...(matchedStatuses.length ? [{ status: { in: matchedStatuses } }] : []),
           ],
         }
       : {}),
   };
-  const orderBy = parseSort(sort, ['chqDate', 'amount', 'chqNo'], { chqDate: 'desc' });
+  const orderBy = parseSort(sort, [
+    'chqDate', 'amount', 'chqNo', 'status', 'statusDate', 'totalDays',
+    'pvNo', 'payeeName', 'companyBankAccount.bank.name',
+  ], { chqDate: 'desc' });
 
   const [cheques, total] = await Promise.all([
     prisma.issuedCheque.findMany({
       where,
-      include: { companyBankAccount: { include: { bank: true } }, payee: true, issuedBy: true },
+      include: {
+        fiscalYear: true,
+        companyBankAccount: { include: { bank: true } },
+        transferToAccount: { include: { bank: true } },
+        payee: { include: { firm: true } },
+        issuedBy: true,
+        authority: true,
+      },
       orderBy,
       skip,
       take,
@@ -69,17 +140,29 @@ router.post('/', asyncHandler(async (req, res) => {
   const companyId = requireSingleCompany(req, res);
   if (!companyId) return;
   const {
-    companyBankAccountId, chqNo, chqDate, payeeId, payeeName, payeeType,
-    amount, purpose, issuedById,
+    companyBankAccountId, fiscalYearId, pvNo, chqNo, chqDate,
+    payeeId, payeeName, payeeType, payeeCategory, transferToAccountId,
+    amount, purpose, issuedById, authorityId,
   } = req.body;
 
-  const required = { companyBankAccountId, chqNo, chqDate, payeeName, payeeType, amount };
+  const transfer = isTransfer(transferToAccountId);
+  const required = { companyBankAccountId, fiscalYearId, chqNo, chqDate, amount };
+  if (!transfer) {
+    required.payeeName = payeeName;
+    required.payeeType = payeeType;
+  }
   const missing = Object.entries(required).filter(([, v]) => v === undefined || v === null || v === '');
   if (missing.length) {
     return res.status(400).json({ error: `Missing required fields: ${missing.map(([k]) => k).join(', ')}` });
   }
-  if (!isValidEnum(payeeType, PARTY_TYPES)) {
+  if (transfer && transferToAccountId === companyBankAccountId) {
+    return res.status(400).json({ error: 'transferToAccountId cannot be the same account this cheque is drawn from' });
+  }
+  if (!transfer && !isValidEnum(payeeType, PARTY_TYPES)) {
     return res.status(400).json({ error: `payeeType must be one of: ${PARTY_TYPES.join(', ')}` });
+  }
+  if (payeeCategory !== undefined && !isValidEnum(payeeCategory, PAYEE_CATEGORIES)) {
+    return res.status(400).json({ error: `payeeCategory must be one of: ${PAYEE_CATEGORIES.join(', ')}` });
   }
   if (!isPositiveAmount(amount)) {
     return res.status(400).json({ error: 'amount must be a positive number' });
@@ -89,29 +172,43 @@ router.post('/', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'chqDate is not a valid date' });
   }
 
-  // The account, payee, and issuing staff must all belong to this company.
-  const [account, payee, issuedBy] = await Promise.all([
+  // The account(s), fiscal year, payee, issuing staff, and authority must
+  // all belong to this company.
+  const [account, toAccount, fy, payee, issuedBy, authority] = await Promise.all([
     prisma.companyBankAccount.findFirst({ where: { id: companyBankAccountId, companyId, deletedAt: null } }),
+    transfer ? prisma.companyBankAccount.findFirst({ where: { id: transferToAccountId, companyId, deletedAt: null } }) : null,
+    prisma.fiscalYear.findFirst({ where: { id: fiscalYearId, companyId } }),
     payeeId ? prisma.party.findFirst({ where: { id: payeeId, companyId, deletedAt: null } }) : null,
     issuedById ? prisma.staff.findFirst({ where: { id: issuedById, companyId, deletedAt: null } }) : null,
+    authorityId ? prisma.staff.findFirst({ where: { id: authorityId, companyId, deletedAt: null } }) : null,
   ]);
   if (!account) return res.status(400).json({ error: 'companyBankAccountId does not belong to the selected company or has been deleted' });
+  if (transfer && !toAccount) return res.status(400).json({ error: 'transferToAccountId does not belong to the selected company or has been deleted' });
+  if (!fy) return res.status(400).json({ error: 'fiscalYearId does not belong to the selected company' });
   if (payeeId && !payee) return res.status(400).json({ error: 'payeeId does not belong to the selected company or has been deleted' });
   if (issuedById && !issuedBy) return res.status(400).json({ error: 'issuedById does not belong to the selected company or has been deleted' });
+  if (authorityId && !authority) return res.status(400).json({ error: 'authorityId does not belong to the selected company or has been deleted' });
 
   const cheque = await prisma.issuedCheque.create({
     data: {
       companyId,
       companyBankAccountId,
+      fiscalYearId,
+      pvNo: pvNo || null,
       chqNo,
       chqDate: parsedChqDate,
-      payeeId: payeeId || null,
-      payeeName,
-      payeeType,
-      chequeType: deriveChequeType(payeeType),
+      payeeId: transfer ? null : (payeeId || null),
+      payeeName: transfer ? null : payeeName,
+      payeeType: transfer ? null : payeeType,
+      payeeCategory: transfer ? null : (payeeCategory || null),
+      transferToAccountId: transfer ? transferToAccountId : null,
+      // A transfer is always account-payee (never bearer — it's never
+      // meant to be cashed); otherwise derived from payeeType as before.
+      chequeType: transfer ? 'ACCOUNT_PAYEE' : deriveChequeType(payeeType),
       amount,
       purpose,
       issuedById: issuedById || null,
+      authorityId: authorityId || null,
     },
     include: issuedInclude,
   });
@@ -121,14 +218,17 @@ router.post('/', asyncHandler(async (req, res) => {
 // PATCH /api/issued-cheques/:id  (edit cheque details)
 //
 // Two tiers, same pattern as the received-cheque side: purpose, issuedById,
-// amount are freely editable; chqDate, chqNo, companyBankAccountId, payeeType
-// are "risky" — they feed the @@unique([companyBankAccountId, chqNo])
-// constraint and/or totalDays, so the frontend warns/confirms before
-// sending them, and this route re-validates regardless.
+// authorityId, pvNo, payeeCategory, amount, fiscalYearId are freely
+// editable; chqDate, chqNo, companyBankAccountId, payeeType are "risky" —
+// they feed the @@unique([companyBankAccountId, chqNo]) constraint and/or
+// totalDays, so the frontend warns/confirms before sending them, and this
+// route re-validates regardless. Whether a cheque is a transfer or an
+// external payment is NOT editable after creation — that's a structural
+// choice made at issue time, not a field to flip later.
 router.patch('/:id', asyncHandler(async (req, res) => {
   const {
-    purpose, issuedById, amount,
-    chqDate, chqNo, companyBankAccountId, payeeType,
+    purpose, issuedById, authorityId, pvNo, payeeCategory, amount,
+    chqDate, chqNo, companyBankAccountId, payeeType, fiscalYearId,
   } = req.body;
 
   const existing = await prisma.issuedCheque.findFirst({
@@ -162,25 +262,43 @@ router.patch('/:id', asyncHandler(async (req, res) => {
     totalDays = computeTotalDays(parsedChqDate, existing.statusDate);
   }
 
-  if (payeeType !== undefined && !isValidEnum(payeeType, PARTY_TYPES)) {
-    return res.status(400).json({ error: `payeeType must be one of: ${PARTY_TYPES.join(', ')}` });
+  if (payeeType !== undefined) {
+    if (existing.transferToAccountId) {
+      return res.status(400).json({ error: 'payeeType does not apply to a transfer between our own accounts' });
+    }
+    if (!isValidEnum(payeeType, PARTY_TYPES)) {
+      return res.status(400).json({ error: `payeeType must be one of: ${PARTY_TYPES.join(', ')}` });
+    }
+  }
+  if (payeeCategory !== undefined && payeeCategory !== null && !isValidEnum(payeeCategory, PAYEE_CATEGORIES)) {
+    return res.status(400).json({ error: `payeeCategory must be one of: ${PAYEE_CATEGORIES.join(', ')}` });
   }
 
-  if (companyBankAccountId !== undefined) {
-    const account = await prisma.companyBankAccount.findFirst({ where: { id: companyBankAccountId, companyId: existing.companyId, deletedAt: null } });
-    if (!account) return res.status(400).json({ error: 'companyBankAccountId does not belong to this cheque\'s company or has been deleted' });
-  }
+  const [account, fy, issuedBy, authority] = await Promise.all([
+    companyBankAccountId !== undefined ? prisma.companyBankAccount.findFirst({ where: { id: companyBankAccountId, companyId: existing.companyId, deletedAt: null } }) : true,
+    fiscalYearId !== undefined ? prisma.fiscalYear.findFirst({ where: { id: fiscalYearId, companyId: existing.companyId } }) : true,
+    issuedById ? prisma.staff.findFirst({ where: { id: issuedById, companyId: existing.companyId, deletedAt: null } }) : true,
+    authorityId ? prisma.staff.findFirst({ where: { id: authorityId, companyId: existing.companyId, deletedAt: null } }) : true,
+  ]);
+  if (companyBankAccountId !== undefined && !account) return res.status(400).json({ error: 'companyBankAccountId does not belong to this cheque\'s company or has been deleted' });
+  if (fiscalYearId !== undefined && !fy) return res.status(400).json({ error: 'fiscalYearId does not belong to this cheque\'s company' });
+  if (issuedById && !issuedBy) return res.status(400).json({ error: 'issuedById does not belong to this cheque\'s company or has been deleted' });
+  if (authorityId && !authority) return res.status(400).json({ error: 'authorityId does not belong to this cheque\'s company or has been deleted' });
 
   const cheque = await prisma.issuedCheque.update({
     where: { id: req.params.id },
     data: {
       ...(purpose !== undefined ? { purpose } : {}),
       ...(issuedById !== undefined ? { issuedById: issuedById || null } : {}),
+      ...(authorityId !== undefined ? { authorityId: authorityId || null } : {}),
+      ...(pvNo !== undefined ? { pvNo: pvNo || null } : {}),
+      ...(payeeCategory !== undefined ? { payeeCategory: payeeCategory || null } : {}),
       ...(amount !== undefined ? { amount } : {}),
       // -- risky fields --
       ...(chqDate !== undefined ? { chqDate: parsedChqDate, totalDays } : {}),
       ...(chqNo !== undefined ? { chqNo } : {}),
       ...(companyBankAccountId !== undefined ? { companyBankAccountId } : {}),
+      ...(fiscalYearId !== undefined ? { fiscalYearId } : {}),
       ...(payeeType !== undefined ? { payeeType, chequeType: deriveChequeType(payeeType) } : {}),
     },
     include: issuedInclude,
@@ -256,15 +374,20 @@ router.post('/:id/replace', asyncHandler(async (req, res) => {
     data: {
       companyId: original.companyId,
       companyBankAccountId: companyBankAccountId ?? original.companyBankAccountId,
+      fiscalYearId: original.fiscalYearId,
+      pvNo: original.pvNo,
       chqNo,
       chqDate: parsedChqDate,
       payeeId: original.payeeId,
       payeeName: original.payeeName,
       payeeType: original.payeeType,
+      payeeCategory: original.payeeCategory,
+      transferToAccountId: original.transferToAccountId,
       chequeType: original.chequeType,
       amount: amount ?? original.amount,
       purpose: original.purpose,
       issuedById: issuedById ?? original.issuedById,
+      authorityId: original.authorityId,
       replacesChequeId: original.id,
     },
     include: issuedInclude,
@@ -273,7 +396,7 @@ router.post('/:id/replace', asyncHandler(async (req, res) => {
 }));
 
 router.post('/:id/followups', asyncHandler(async (req, res) => {
-  const { response, note, nextActionDate, staffId, followUpDate, updateStatus } = req.body;
+  const { response, note, nextActionDate, staffId, followUpDate } = req.body;
   if (!response) return res.status(400).json({ error: 'response is required' });
   if (!isValidEnum(response, ISSUED_FOLLOWUP_RESPONSES)) {
     return res.status(400).json({ error: `response must be one of: ${ISSUED_FOLLOWUP_RESPONSES.join(', ')}` });
@@ -290,31 +413,19 @@ router.post('/:id/followups', asyncHandler(async (req, res) => {
   const cheque = await prisma.issuedCheque.findFirst({ where: { id: req.params.id, deletedAt: null, ...companyWhere(req) } });
   if (!cheque) return res.status(404).json({ error: 'Issued cheque not found' });
 
-  const newStatusDate = new Date();
-  const shouldAdvanceStatus = updateStatus !== false && cheque.status === 'RETURNED';
-
-  const [followUp] = await prisma.$transaction([
-    prisma.issuedChequeFollowUp.create({
-      data: {
-        issuedChequeId: req.params.id,
-        response,
-        note,
-        nextActionDate: parsedNextActionDate,
-        staffId: staffId || null,
-        followUpDate: parsedFollowUpDate,
-      },
-    }),
-    ...(shouldAdvanceStatus
-      ? [prisma.issuedCheque.update({
-          where: { id: req.params.id },
-          data: {
-            status: 'FOLLOWUP',
-            statusDate: newStatusDate,
-            totalDays: computeTotalDays(cheque.chqDate, newStatusDate),
-          },
-        })]
-      : []),
-  ]);
+  // Just a record of the conversation — the cheque stays RETURNED
+  // throughout. There's no more FOLLOWUP status to advance into; the
+  // follow-up log itself is the record of "we're on this."
+  const followUp = await prisma.issuedChequeFollowUp.create({
+    data: {
+      issuedChequeId: req.params.id,
+      response,
+      note,
+      nextActionDate: parsedNextActionDate,
+      staffId: staffId || null,
+      followUpDate: parsedFollowUpDate,
+    },
+  });
 
   res.status(201).json(followUp);
 }));

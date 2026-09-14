@@ -69,7 +69,14 @@ router.post('/', asyncHandler(async (req, res) => {
     if (firmError) return res.status(400).json({ error: firmError });
   }
   const party = await prisma.party.create({
-    data: { type, name, phone, address, panNo, firmId: type === 'FIRM' ? null : (firmId || null), companyId },
+    data: {
+      type, name, phone, address,
+      // An individual's PAN, if any, belongs to the firm they're
+      // affiliated with — never entered directly on the individual.
+      panNo: type === 'FIRM' ? (panNo || null) : null,
+      firmId: type === 'FIRM' ? null : (firmId || null),
+      companyId,
+    },
   });
   res.status(201).json(party);
 }));
@@ -92,7 +99,11 @@ router.patch('/:id', asyncHandler(async (req, res) => {
       ...(name !== undefined ? { name } : {}),
       ...(phone !== undefined ? { phone } : {}),
       ...(address !== undefined ? { address } : {}),
-      ...(panNo !== undefined ? { panNo } : {}),
+      // Same rule as create: PAN only ever lives directly on a FIRM party.
+      // An INDIVIDUAL's PAN comes from their affiliated firm instead — see
+      // routes/parties.js's GET include and the frontend's read-only
+      // "PAN (from firm)" display.
+      ...(panNo !== undefined ? { panNo: existing.type === 'FIRM' ? (panNo || null) : null } : {}),
       ...(firmId !== undefined ? { firmId: firmId || null } : {}),
     },
   });

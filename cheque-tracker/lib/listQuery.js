@@ -28,10 +28,12 @@ export function statusWhereFragment(statusParam, validValues) {
 // Only fields in allowedFields are honored; any single malformed/unknown
 // entry is just dropped rather than invalidating the whole stack (fails
 // safe, same spirit as before). A field may be a plain scalar ("chqDate")
-// or a dotted relation path ("issuer.name"), which becomes a nested Prisma
-// orderBy ({ issuer: { name: dir } }). Returns an array — Prisma accepts an
-// array of orderBy objects for multi-column sort — or defaultOrderBy
-// (typically a single object) when nothing valid was given.
+// or a dotted relation path of any depth ("issuer.name",
+// "companyBankAccount.bank.name"), which becomes a correspondingly nested
+// Prisma orderBy ({ issuer: { name: dir } }, or two levels deep for the
+// account/bank case). Returns an array — Prisma accepts an array of
+// orderBy objects for multi-column sort — or defaultOrderBy (typically a
+// single object) when nothing valid was given.
 export function parseSort(sortParam, allowedFields, defaultOrderBy) {
   if (!sortParam) return defaultOrderBy;
   const orderBy = [];
@@ -39,8 +41,13 @@ export function parseSort(sortParam, allowedFields, defaultOrderBy) {
     const [field, dir] = part.trim().split(':');
     if (!allowedFields.includes(field) || (dir !== 'asc' && dir !== 'desc')) continue;
     if (field.includes('.')) {
-      const [relation, subField] = field.split('.');
-      orderBy.push({ [relation]: { [subField]: dir } });
+      const segments = field.split('.');
+      const leaf = segments.pop();
+      let nested = { [leaf]: dir };
+      for (let i = segments.length - 1; i >= 0; i--) {
+        nested = { [segments[i]]: nested };
+      }
+      orderBy.push(nested);
     } else {
       orderBy.push({ [field]: dir });
     }
