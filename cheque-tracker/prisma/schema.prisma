@@ -151,6 +151,7 @@ model FiscalYear {
 
   year      String   // e.g. "2083/84" — unique per company, see @@unique below
   cheques   Cheque[]
+  issuedCheques IssuedCheque[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
