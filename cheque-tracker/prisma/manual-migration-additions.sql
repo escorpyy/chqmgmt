@@ -69,11 +69,24 @@ ALTER TABLE "IssuedChequeCheckLog" ADD CONSTRAINT chk_issuedchecklog_resolved_af
 
 
 -- ----------------------------------------------------------------------------
--- 6. Case-insensitive uniqueness on Bank.name
---    ("ABC Bank" and "abc bank" should not both be allowed)
+-- 6. Case-insensitive uniqueness on Bank.name, PER COMPANY
+--    ("ABC Bank" and "abc bank" should not both be allowed within the same
+--    company — but the same bank name legitimately recurs across different
+--    companies' books, e.g. "Nabil Bank", so this must NOT be a database-wide
+--    constraint. schema.prisma's own @@unique([companyId, name]) is already
+--    scoped this way; this index just adds case-insensitivity on top of it.
+--
+--    FIX (2026): this index used to be created WITHOUT companyId
+--    (`CREATE UNIQUE INDEX bank_name_ci_unique ON "Bank" (lower(name))`),
+--    which silently blocked any two companies from ever using the same bank
+--    name — a bug introduced when multi-company support was added without
+--    updating this file. The DROP below removes that incorrect global index
+--    (a no-op if you're applying this for the first time), and the
+--    replacement index is scoped to (companyId, lower(name)).
 -- ----------------------------------------------------------------------------
-ALTER TABLE "Bank" DROP CONSTRAINT IF EXISTS "Bank_name_key"; -- drop the case-sensitive unique Prisma created
-CREATE UNIQUE INDEX bank_name_ci_unique ON "Bank" (lower(name));
+ALTER TABLE "Bank" DROP CONSTRAINT IF EXISTS "Bank_name_key"; -- drop the case-sensitive single-column unique Prisma created pre-multi-company
+DROP INDEX IF EXISTS bank_name_ci_unique; -- drop the incorrect database-wide case-insensitive index, if present
+CREATE UNIQUE INDEX IF NOT EXISTS bank_name_ci_unique_per_company ON "Bank" ("companyId", lower(name));
 
 
 -- ----------------------------------------------------------------------------

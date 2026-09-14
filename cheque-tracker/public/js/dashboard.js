@@ -11,7 +11,12 @@ export async function loadDashboard() {
   const statEl = { rec: document.getElementById('stat-receivable'), pay: document.getElementById('stat-payable'), chk: document.getElementById('stat-oncheck') };
   try {
     const summary = await api('/dashboard/summary');
-    const outstanding = (byStatus) => byStatus.filter((s) => !['CLEARED'].includes(s.status))
+    // FIX (2026): this used to exclude only CLEARED, so a CANCELLED cheque
+    // — void, will never be collected or paid — still counted toward
+    // "outstanding" receivable/payable, inflating both headline figures.
+    // RETURNED stays counted: a bounced cheque is unresolved (the money is
+    // still owed) until it's replaced or written off, unlike CANCELLED.
+    const outstanding = (byStatus) => byStatus.filter((s) => !['CLEARED', 'CANCELLED'].includes(s.status))
       .reduce((sum, s) => sum + Number(s.amount), 0);
 
     statEl.rec.textContent = fmtMoney(outstanding(summary.received.byStatus));
