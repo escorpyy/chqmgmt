@@ -8,6 +8,7 @@ import { ISSUED_STATUSES, ISSUED_FOLLOWUP_RESPONSES, RETURN_REASONS, PAYMENT_MET
 import { loadDashboard } from './dashboard.js';
 import { syncEditableSelect } from './combobox.js';
 import { syncBsDatePicker } from './bsDatePicker.js';
+import { toolbarHtml, wireToolbar, setToolbarState, copyRecordToClipboard, readRecordFromClipboard } from './formToolbar.js';
 
 // ============================================================================
 // ISSUED CHEQUES
@@ -21,6 +22,12 @@ const DEFAULT_ISSUED_SORT = [{ field: 'chqDate', dir: 'desc' }];
 // already in the stack toggles asc -> desc -> off. Only "Clear filters"
 // resets it.
 let issuedSort = DEFAULT_ISSUED_SORT.map((s) => ({ ...s }));
+
+// Record-navigator cache for the Prev/Next arrows in the issued cheque form
+// modal — same scheme as received.js's receivedNav* (see the comment there).
+let issuedNavParams = null;
+let issuedNavTotal = 0;
+let issuedNavPages = new Map();
 
 // Column definitions for the sortable headers — label plus the backend
 // sort field (see the allowedFields list in routes/issuedCheques.js;
@@ -63,8 +70,10 @@ function populateFyFilter() {
   fyFilterPopulated = true;
 }
 
-export async function loadIssued(page = issuedPage) {
-  populateFyFilter();
+// Everything that defines "which issued cheques, in what order" — shared by
+// loadIssued (the table) and the nav-cache fetchers below (the form modal's
+// Prev/Next). See received.js's buildReceivedFilterParams for the rationale.
+function buildIssuedFilterParams() {
   const search = document.getElementById('issued-search').value.trim();
   const status = document.getElementById('issued-status-filter').value;
   const fiscalYearId = document.getElementById('issued-fy-filter').value;
@@ -83,16 +92,58 @@ export async function loadIssued(page = issuedPage) {
   if (amountMax !== '') params.set('amountMax', amountMax);
   if (transfers) params.set('transfers', transfers);
   params.set('sort', issuedSort.map((s) => `${s.field}:${s.dir}`).join(','));
+  return params;
+}
+
+export async function loadIssued(page = issuedPage) {
+  populateFyFilter();
+  const filterParams = buildIssuedFilterParams();
+  const filterKey = filterParams.toString();
+  const params = new URLSearchParams(filterParams);
   params.set('page', page);
   params.set('pageSize', PAGE_SIZE);
 
   try {
     const { cheques, total } = await api(`/issued-cheques?${params.toString()}`);
     issuedPage = page;
+    if (filterKey !== issuedNavParams) {
+      issuedNavParams = filterKey;
+      issuedNavPages = new Map();
+    }
+    issuedNavTotal = total;
+    issuedNavPages.set(page, cheques.map((c) => c.id));
     renderIssuedTable(cheques, total, page);
   } catch (err) {
     toast(err.message, 'error');
   }
+}
+
+async function fetchIssuedNavPage(page) {
+  if (issuedNavPages.has(page)) return issuedNavPages.get(page);
+  const params = new URLSearchParams(issuedNavParams || buildIssuedFilterParams());
+  params.set('page', page);
+  params.set('pageSize', PAGE_SIZE);
+  const { cheques, total } = await api(`/issued-cheques?${params.toString()}`);
+  issuedNavTotal = total;
+  const ids = cheques.map((c) => c.id);
+  issuedNavPages.set(page, ids);
+  return ids;
+}
+
+function issuedIndexOf(id) {
+  for (const [page, ids] of issuedNavPages) {
+    const offset = ids.indexOf(id);
+    if (offset !== -1) return (page - 1) * PAGE_SIZE + offset;
+  }
+  return -1;
+}
+
+async function issuedIdAtIndex(index) {
+  if (index < 0 || index >= issuedNavTotal) return null;
+  const page = Math.floor(index / PAGE_SIZE) + 1;
+  const offset = index % PAGE_SIZE;
+  const ids = await fetchIssuedNavPage(page);
+  return ids[offset] ?? null;
 }
 
 function renderIssuedTable(cheques, total, page) {
@@ -208,133 +259,114 @@ document.getElementById('btn-issued-clear-filters').addEventListener('click', ()
   loadIssued(1);
 });
 
-document.getElementById('btn-new-issued').addEventListener('click', () => openNewIssuedModal());
+document.getElementById('btn-new-issued').addEventListener('click', () => renderIssuedFormModal('new', null));
 
-function openNewIssuedModal() {
-  const body = `
-    <form id="form-new-issued">
-      <div class="form-error"></div>
-      <div class="form-grid">
-        <div class="field">
-          <label>Our bank account *</label>
-          <select name="companyBankAccountId" required>${selectOptions(state.accounts, 'id', (a) => `${a.accountName} — ${a.bank?.name || ''}`, 'Select account…')}</select>
-        </div>
-        <div class="field">
-          <label>Fiscal year *</label>
-          <select name="fiscalYearId" required>${selectOptions(state.fiscalYears, 'id', (f) => f.year, 'Select fiscal year…')}</select>
-        </div>
-        <div class="field">
-          <label>Cheque no *</label>
-          <input name="chqNo" type="text" required>
-        </div>
-        <div class="field">
-          <label>Cheque date *</label>
-          <input name="chqDate" type="date" data-bs-mode="text" required>
-        </div>
-        <div class="field">
-          <label>PV no.</label>
-          <input name="pvNo" type="text" placeholder="PV-1024">
-        </div>
-        <div class="field">
-          <label>Amount *</label>
-          <input name="amount" type="number" step="0.01" min="0.01" required>
-        </div>
-        <div class="field span-2">
-          <label class="checkbox-field">
-            <input type="checkbox" id="is-transfer-toggle">
-            This is a transfer to another of our own accounts (not a payment to a payee)
-          </label>
-        </div>
-        <div id="payee-fields" class="field span-2" style="display:contents">
-          <div class="field span-2">
-            <label>Vendor *</label>
-            <select name="payeeId">${selectOptions(state.parties.filter((p) => p.isVendor), 'id', (p) => p.name, 'Select vendor…')}</select>
-          </div>
-          <div class="field">
-            <label>Payee name on cheque <span class="hint" style="font-weight:normal">(if different from vendor)</span></label>
-            <input name="payeeName" type="text">
-          </div>
-          <div class="field">
-            <label>Payee type *</label>
-            <select name="payeeType">${enumOptions(PARTY_TYPES)}</select>
-          </div>
-          <div class="field">
-            <label>Payee category</label>
-            <select name="payeeCategory">${enumOptions(PAYEE_CATEGORIES, 'Not specified')}</select>
-          </div>
-        </div>
-        <div id="transfer-fields" class="field span-2" style="display:none">
-          <label>Transfer to account *</label>
-          <select name="transferToAccountId">${selectOptions(state.accounts, 'id', (a) => `${a.accountName} — ${a.bank?.name || ''}`, 'Select destination account…')}</select>
-        </div>
-        <div class="field">
-          <label>Issued by staff</label>
-          <select name="issuedById">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
-        </div>
-        <div class="field">
-          <label>Authority</label>
-          <select name="authorityId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
-        </div>
-        <div class="field span-2">
-          <label>Purpose</label>
-          <textarea name="purpose" placeholder="e.g. against bill no. 4521"></textarea>
-        </div>
+// Field markup for the "new" record — no <form> wrapper or buttons; those
+// come from renderIssuedFormModal.
+function newIssuedFieldsHtml() {
+  return `
+    <div class="field">
+      <label>Our bank account *</label>
+      <select name="companyBankAccountId" required>${selectOptions(state.accounts, 'id', (a) => `${a.accountName} — ${a.bank?.name || ''}`, 'Select account…')}</select>
+    </div>
+    <div class="field">
+      <label>Fiscal year *</label>
+      <select name="fiscalYearId" required>${selectOptions(state.fiscalYears, 'id', (f) => f.year, 'Select fiscal year…')}</select>
+    </div>
+    <div class="field">
+      <label>Cheque no *</label>
+      <input name="chqNo" type="text" required>
+    </div>
+    <div class="field">
+      <label>Cheque date *</label>
+      <input name="chqDate" type="date" data-bs-mode="text" required>
+    </div>
+    <div class="field">
+      <label>PV no.</label>
+      <input name="pvNo" type="text" placeholder="PV-1024">
+    </div>
+    <div class="field">
+      <label>Amount *</label>
+      <input name="amount" type="number" step="0.01" min="0.01" required>
+    </div>
+    <div class="field span-2">
+      <label class="checkbox-field">
+        <input type="checkbox" id="is-transfer-toggle">
+        This is a transfer to another of our own accounts (not a payment to a payee)
+      </label>
+    </div>
+    <div id="payee-fields" class="field span-2" style="display:contents">
+      <div class="field span-2">
+        <label>Vendor *</label>
+        <select name="payeeId">${selectOptions(state.parties.filter((p) => p.isVendor), 'id', (p) => p.name, 'Select vendor…')}</select>
       </div>
-      <div class="form-actions">
-        <button type="button" class="btn btn-ghost" id="cancel-new-issued">Cancel</button>
-        <button type="submit" class="btn btn-primary">Save cheque</button>
+      <div class="field">
+        <label>Payee name on cheque <span class="hint" style="font-weight:normal">(if different from vendor)</span></label>
+        <input name="payeeName" type="text">
       </div>
-    </form>`;
+      <div class="field">
+        <label>Payee type *</label>
+        <select name="payeeType">${enumOptions(PARTY_TYPES)}</select>
+      </div>
+      <div class="field">
+        <label>Payee category</label>
+        <select name="payeeCategory">${enumOptions(PAYEE_CATEGORIES, 'Not specified')}</select>
+      </div>
+    </div>
+    <div id="transfer-fields" class="field span-2" style="display:none">
+      <label>Transfer to account *</label>
+      <select name="transferToAccountId">${selectOptions(state.accounts, 'id', (a) => `${a.accountName} — ${a.bank?.name || ''}`, 'Select destination account…')}</select>
+    </div>
+    <div class="field">
+      <label>Issued by staff</label>
+      <select name="issuedById">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
+    </div>
+    <div class="field">
+      <label>Authority</label>
+      <select name="authorityId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
+    </div>
+    <div class="field span-2">
+      <label>Purpose</label>
+      <textarea name="purpose" placeholder="e.g. against bill no. 4521"></textarea>
+    </div>`;
+}
 
-  openModal('New issued cheque', body, {
-    onMount: () => {
-      const form = document.getElementById('form-new-issued');
-      const toggle = document.getElementById('is-transfer-toggle');
-      const payeeFields = document.getElementById('payee-fields');
-      const transferFields = document.getElementById('transfer-fields');
-      const payeeIdSelect = form.querySelector('[name="payeeId"]');
-      const payeeTypeSelect = form.querySelector('[name="payeeType"]');
-      const transferToSelect = form.querySelector('[name="transferToAccountId"]');
+// Wires the transfer/payee toggle for the "new" form. Returns a function
+// that strips whichever side (payee vs transfer) is inactive from the
+// submitted FormData — mirrors the old openNewIssuedModal submit logic.
+function wireIssuedTransferToggle(form) {
+  const toggle = document.getElementById('is-transfer-toggle');
+  const payeeFields = document.getElementById('payee-fields');
+  const transferFields = document.getElementById('transfer-fields');
+  const payeeIdSelect = form.querySelector('[name="payeeId"]');
+  const payeeTypeSelect = form.querySelector('[name="payeeType"]');
+  const transferToSelect = form.querySelector('[name="transferToAccountId"]');
 
-      const applyToggle = () => {
-        const isTransfer = toggle.checked;
-        payeeFields.style.display = isTransfer ? 'none' : 'contents';
-        transferFields.style.display = isTransfer ? '' : 'none';
-        payeeIdSelect.required = !isTransfer;
-        payeeTypeSelect.required = !isTransfer;
-        transferToSelect.required = isTransfer;
-      };
-      toggle.addEventListener('change', applyToggle);
-      applyToggle();
+  const applyToggle = () => {
+    const isTransfer = toggle.checked;
+    payeeFields.style.display = isTransfer ? 'none' : 'contents';
+    transferFields.style.display = isTransfer ? '' : 'none';
+    payeeIdSelect.required = !isTransfer;
+    payeeTypeSelect.required = !isTransfer;
+    transferToSelect.required = isTransfer;
+  };
+  toggle.addEventListener('change', applyToggle);
+  applyToggle();
 
-      document.getElementById('cancel-new-issued').addEventListener('click', closeModal);
-      form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        clearFormError(form);
-        const data = Object.fromEntries(new FormData(form).entries());
-        delete data.__ignore;
-        if (toggle.checked) {
-          delete data.payeeId;
-          delete data.payeeName;
-          delete data.payeeType;
-          delete data.payeeCategory;
-        } else {
-          delete data.transferToAccountId;
-          if (!data.payeeName) delete data.payeeName;
-          if (!data.payeeCategory) delete data.payeeCategory;
-        }
-        try {
-          await api('/issued-cheques', { method: 'POST', body: JSON.stringify(data) });
-          toast('Issued cheque recorded', 'success');
-          closeModal();
-          loadIssued();
-          loadDashboard();
-        } catch (err) {
-          formError(form, err.message);
-        }
-      });
-    },
-  });
+  return (data) => {
+    delete data.__ignore;
+    if (toggle.checked) {
+      delete data.payeeId;
+      delete data.payeeName;
+      delete data.payeeType;
+      delete data.payeeCategory;
+    } else {
+      delete data.transferToAccountId;
+      if (!data.payeeName) delete data.payeeName;
+      if (!data.payeeCategory) delete data.payeeCategory;
+    }
+    return data;
+  };
 }
 
 async function openIssuedDetail(id) {
@@ -485,127 +517,174 @@ function wireIssuedActions(c) {
       if (action === 'checklog') openIssuedCheckLogModal(c);
       if (action === 'resolve-checklog') openIssuedResolveCheckLogModal(c, btn.dataset.logId);
       if (action === 'replace') openIssuedReplaceModal(c);
-      if (action === 'edit') openIssuedEditModal(c);
-      if (action === 'delete') deleteIssuedCheque(c);
+      // Same pattern as received.js — both entry points open the one
+      // navigable form; Delete opens it read-only, Delete button one click away.
+      if (action === 'edit') { closeDrawer(); renderIssuedFormModal('edit', c); }
+      if (action === 'delete') { closeDrawer(); renderIssuedFormModal('view', c); }
     });
   });
 }
 
-function openIssuedEditModal(c) {
+// Field markup for editing an existing record's freely-editable fields.
+// `isTransfer` cheques never had a payee, so payeeCategory doesn't apply.
+function editIssuedFieldsMain(c, isTransfer) {
+  return `
+    <div class="field">
+      <label>Fiscal year *</label>
+      <select name="fiscalYearId" required>${selectOptions(state.fiscalYears, 'id', (f) => f.year, 'Select fiscal year…')}</select>
+    </div>
+    <div class="field">
+      <label>PV no.</label>
+      <input name="pvNo" type="text" value="${escapeHtml(c.pvNo || '')}">
+    </div>
+    <div class="field">
+      <label>Amount *</label>
+      <input name="amount" type="number" step="0.01" min="0.01" required value="${escapeHtml(c.amount)}">
+    </div>
+    <div class="field">
+      <label>Issued by staff</label>
+      <select name="issuedById">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
+    </div>
+    <div class="field">
+      <label>Authority</label>
+      <select name="authorityId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
+    </div>
+    ${!isTransfer ? `
+    <div class="field">
+      <label>Payee category</label>
+      <select name="payeeCategory">${enumOptions(PAYEE_CATEGORIES, 'Not specified')}</select>
+    </div>` : ''}
+    <div class="field span-2">
+      <label>Purpose</label>
+      <textarea name="purpose">${escapeHtml(c.purpose || '')}</textarea>
+    </div>`;
+}
+
+// "Risky" fields — feed the account/cheque-no uniqueness check and the
+// day-count math (see editChequeFieldsRisky in received.js for the pattern).
+function editIssuedFieldsRisky(c, isTransfer) {
+  return `
+    <div class="field">
+      <label>Cheque date *</label>
+      <input name="chqDate" type="date" data-bs-mode="text" required value="${fmtDateInput(c.chqDate)}">
+    </div>
+    <div class="field">
+      <label>Cheque no *</label>
+      <input name="chqNo" type="text" required value="${escapeHtml(c.chqNo)}">
+    </div>
+    <div class="field span-2">
+      <label>Our account *</label>
+      <select name="companyBankAccountId" required>${selectOptions(state.accounts, 'id', (a) => `${a.accountName} — ${a.bank?.name || ''}`, 'Select account…')}</select>
+    </div>
+    ${!isTransfer ? `
+    <div class="field">
+      <label>Payee type *</label>
+      <select name="payeeType" required>${enumOptions(PARTY_TYPES)}</select>
+    </div>` : `<p class="hint">Payee type doesn't apply — this cheque is a transfer to ${escapeHtml(c.transferToAccount?.accountName || 'another of our accounts')}, which isn't editable after creation.</p>`}`;
+}
+
+// Read-only summary for 'view' mode.
+function issuedViewInfoHtml(c) {
   const isTransfer = !!c.transferToAccountId;
-  const body = `
-    <form id="form-edit-issued">
-      <div class="form-error"></div>
-      <div class="form-grid">
-        <div class="field">
-          <label>Fiscal year *</label>
-          <select name="fiscalYearId" required>${selectOptions(state.fiscalYears, 'id', (f) => f.year, 'Select fiscal year…')}</select>
-        </div>
-        <div class="field">
-          <label>PV no.</label>
-          <input name="pvNo" type="text" value="${escapeHtml(c.pvNo || '')}">
-        </div>
-        <div class="field">
-          <label>Amount *</label>
-          <input name="amount" type="number" step="0.01" min="0.01" required value="${escapeHtml(c.amount)}">
-        </div>
-        <div class="field">
-          <label>Issued by staff</label>
-          <select name="issuedById">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
-        </div>
-        <div class="field">
-          <label>Authority</label>
-          <select name="authorityId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
-        </div>
-        ${!isTransfer ? `
-        <div class="field">
-          <label>Payee category</label>
-          <select name="payeeCategory">${enumOptions(PAYEE_CATEGORIES, 'Not specified')}</select>
-        </div>` : ''}
-        <div class="field span-2">
-          <label>Purpose</label>
-          <textarea name="purpose">${escapeHtml(c.purpose || '')}</textarea>
-        </div>
-      </div>
+  return `
+    <dl class="detail-grid" style="margin-top:0.2rem">
+      <div class="detail-field"><dt>Amount</dt><dd>Rs ${fmtMoney(c.amount)}</dd></div>
+      <div class="detail-field"><dt>Fiscal year</dt><dd>${escapeHtml(c.fiscalYear?.year || '—')}</dd></div>
+      <div class="detail-field"><dt>PV no.</dt><dd>${escapeHtml(c.pvNo || '—')}</dd></div>
+      <div class="detail-field"><dt>Our account</dt><dd>${escapeHtml(c.companyBankAccount?.accountName || '—')}</dd></div>
+      <div class="detail-field"><dt>Bank</dt><dd>${escapeHtml(c.companyBankAccount?.bank?.name || '—')}</dd></div>
+      <div class="detail-field"><dt>Cheque date</dt><dd>${fmtDate(c.chqDate)}</dd></div>
+      <div class="detail-field"><dt>Cheque no</dt><dd class="num">${escapeHtml(c.chqNo)}</dd></div>
+      ${isTransfer
+        ? `<div class="detail-field"><dt>Transfer to</dt><dd>${escapeHtml(c.transferToAccount?.accountName || '—')} (${escapeHtml(c.transferToAccount?.bank?.name || '—')})</dd></div>`
+        : `
+      <div class="detail-field"><dt>Vendor</dt><dd>${escapeHtml(c.payee?.name || '—')}</dd></div>
+      <div class="detail-field"><dt>Payee name on cheque</dt><dd>${escapeHtml(c.payeeName || '—')}</dd></div>
+      <div class="detail-field"><dt>Payee type</dt><dd>${humanize(c.payeeType)}</dd></div>
+      <div class="detail-field"><dt>Payee category</dt><dd>${c.payeeCategory ? humanize(c.payeeCategory) : '—'}</dd></div>`}
+      <div class="detail-field"><dt>Issued by</dt><dd>${escapeHtml(c.issuedBy?.name || '—')}</dd></div>
+      <div class="detail-field"><dt>Authority</dt><dd>${escapeHtml(c.authority?.name || '—')}</dd></div>
+      <div class="detail-field"><dt>Purpose</dt><dd>${escapeHtml(c.purpose || '—')}</dd></div>
+    </dl>`;
+}
 
-      <div class="section-title" style="margin-top:1rem">Risky fields</div>
-      <p class="hint" style="margin-top:0">These affect the account/cheque-no uniqueness check and the lifecycle day-count. You'll be asked to confirm if you change any of them.</p>
-      <div class="form-grid">
-        <div class="field">
-          <label>Cheque date *</label>
-          <input name="chqDate" type="date" data-bs-mode="text" required value="${fmtDateInput(c.chqDate)}">
-        </div>
-        <div class="field">
-          <label>Cheque no *</label>
-          <input name="chqNo" type="text" required value="${escapeHtml(c.chqNo)}">
-        </div>
-        <div class="field span-2">
-          <label>Our account *</label>
-          <select name="companyBankAccountId" required>${selectOptions(state.accounts, 'id', (a) => `${a.accountName} — ${a.bank?.name || ''}`, 'Select account…')}</select>
-        </div>
-        ${!isTransfer ? `
-        <div class="field">
-          <label>Payee type *</label>
-          <select name="payeeType" required>${enumOptions(PARTY_TYPES)}</select>
-        </div>` : `<p class="hint">Payee type doesn't apply — this cheque is a transfer to ${escapeHtml(c.transferToAccount?.accountName || 'another of our accounts')}, which isn't editable after creation.</p>`}
-      </div>
+// ----------------------------------------------------------------------------
+// Unified New / View / Edit form modal for issued cheques — mirrors
+// renderReceivedFormModal in received.js; see the comments there.
+// ----------------------------------------------------------------------------
+function renderIssuedFormModal(mode, cheque) {
+  const isNew = mode === 'new';
+  const isEdit = mode === 'edit';
+  const isTransfer = !isNew && !!cheque.transferToAccountId;
+  const title = isNew ? 'New issued cheque' : `Issued cheque ${escapeHtml(cheque.chqNo)}`;
+  const position = isNew ? null : issuedIndexOf(cheque.id);
 
-      <div class="form-actions">
-        <button type="button" class="btn btn-ghost" id="cancel-edit-issued">Cancel</button>
-        <button type="submit" class="btn btn-primary">Save changes</button>
-      </div>
-    </form>`;
-  openModal(`Edit issued cheque — ${escapeHtml(c.chqNo)}`, body, {
+  let bodyInner;
+  if (isNew) {
+    bodyInner = `
+      <form id="form-issued-record">
+        <div class="form-error"></div>
+        <div class="form-grid">${newIssuedFieldsHtml()}</div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Save cheque</button>
+        </div>
+      </form>`;
+  } else if (isEdit) {
+    bodyInner = `
+      <form id="form-issued-record">
+        <div class="form-error"></div>
+        <div class="form-grid">${editIssuedFieldsMain(cheque, isTransfer)}</div>
+        <div class="section-title" style="margin-top:1rem">Risky fields</div>
+        <p class="hint" style="margin-top:0">These affect the account/cheque-no uniqueness check and the lifecycle day-count. You'll be asked to confirm if you change any of them.</p>
+        <div class="form-grid">${editIssuedFieldsRisky(cheque, isTransfer)}</div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Save changes</button>
+        </div>
+      </form>`;
+  } else {
+    bodyInner = issuedViewInfoHtml(cheque);
+  }
+
+  openModal(title, `${toolbarHtml()}${bodyInner}`, {
     onMount: () => {
-      const form = document.getElementById('form-edit-issued');
-      form.querySelector('[name="fiscalYearId"]').value = c.fiscalYearId;
-      syncEditableSelect(form.querySelector('[name="fiscalYearId"]'));
-      form.querySelector('[name="issuedById"]').value = c.issuedById || '';
-      syncEditableSelect(form.querySelector('[name="issuedById"]'));
-      form.querySelector('[name="authorityId"]').value = c.authorityId || '';
-      syncEditableSelect(form.querySelector('[name="authorityId"]'));
-      form.querySelector('[name="companyBankAccountId"]').value = c.companyBankAccountId;
-      syncEditableSelect(form.querySelector('[name="companyBankAccountId"]'));
-      if (!isTransfer) {
-        form.querySelector('[name="payeeCategory"]').value = c.payeeCategory || '';
-        form.querySelector('[name="payeeType"]').value = c.payeeType;
-      }
-      document.getElementById('cancel-edit-issued').addEventListener('click', closeModal);
-      form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        clearFormError(form);
-        const data = Object.fromEntries(new FormData(form).entries());
-        if (!data.payeeCategory) delete data.payeeCategory;
-
-        const riskyChanged = data.chqDate !== fmtDateInput(c.chqDate)
-          || data.chqNo !== c.chqNo
-          || data.companyBankAccountId !== c.companyBankAccountId
-          || (!isTransfer && data.payeeType !== c.payeeType);
-        if (riskyChanged) {
-          const ok = await openConfirmModal(
-            'Change risky fields?',
-            'You\'re changing the cheque date, cheque no, our account, or payee type. These affect the uniqueness check and the lifecycle day-count for this cheque. Continue?',
-            { confirmLabel: 'Save changes', danger: false },
-          );
-          if (!ok) return;
-        }
-
-        try {
-          await api(`/issued-cheques/${c.id}`, { method: 'PATCH', body: JSON.stringify(data) });
-          toast('Issued cheque updated', 'success');
-          closeModal();
-          openIssuedDetail(c.id);
-          loadIssued();
-          loadDashboard();
-        } catch (err) {
-          formError(form, err.message);
-        }
+      const root = document.getElementById('modal-content');
+      setToolbarState(root, { mode, position, total: issuedNavTotal });
+      wireToolbar(root, {
+        new: () => { closeModal(); renderIssuedFormModal('new', null); },
+        edit: () => { if (mode === 'view') { closeModal(); renderIssuedFormModal('edit', cheque); } },
+        delete: () => { if (!isNew) issuedDeleteFromForm(cheque); },
+        prev: () => issuedNavigate(mode, position, -1),
+        next: () => issuedNavigate(mode, position, 1),
+        copy: () => issuedCopyRecord(mode, cheque),
+        paste: () => issuedPasteRecord(),
       });
+
+      const form = document.getElementById('form-issued-record');
+      let stripInactiveSide = (data) => data; // no-op unless 'new' wires the transfer toggle
+
+      if (isNew) {
+        stripInactiveSide = wireIssuedTransferToggle(form);
+      } else if (isEdit) {
+        form.querySelector('[name="fiscalYearId"]').value = cheque.fiscalYearId;
+        syncEditableSelect(form.querySelector('[name="fiscalYearId"]'));
+        form.querySelector('[name="issuedById"]').value = cheque.issuedById || '';
+        syncEditableSelect(form.querySelector('[name="issuedById"]'));
+        form.querySelector('[name="authorityId"]').value = cheque.authorityId || '';
+        syncEditableSelect(form.querySelector('[name="authorityId"]'));
+        form.querySelector('[name="companyBankAccountId"]').value = cheque.companyBankAccountId;
+        syncEditableSelect(form.querySelector('[name="companyBankAccountId"]'));
+        if (!isTransfer) {
+          form.querySelector('[name="payeeCategory"]').value = cheque.payeeCategory || '';
+          form.querySelector('[name="payeeType"]').value = cheque.payeeType;
+        }
+      }
+
+      if (form) form.addEventListener('submit', (e) => issuedSubmitForm(e, isEdit, cheque, isTransfer, stripInactiveSide));
     },
   });
 }
 
-async function deleteIssuedCheque(c) {
+async function issuedDeleteFromForm(c) {
   const ok = await openConfirmModal(
     'Delete issued cheque?',
     `This removes cheque ${escapeHtml(c.chqNo)} from active lists and can be restored from Trash. Its history is kept, not erased.`,
@@ -613,12 +692,123 @@ async function deleteIssuedCheque(c) {
   if (!ok) return;
   try {
     await api(`/issued-cheques/${c.id}`, { method: 'DELETE' });
-    toast('Issued cheque deleted', 'success');
-    closeDrawer();
-    loadIssued();
-    loadDashboard();
   } catch (err) {
     toast(err.message, 'error');
+    return;
+  }
+  toast('Issued cheque deleted', 'success');
+  issuedNavParams = null;
+  issuedNavPages = new Map();
+  issuedNavTotal = 0;
+  closeModal();
+  loadIssued();
+  loadDashboard();
+}
+
+async function issuedNavigate(mode, position, delta) {
+  if (mode === 'new' || position == null || position < 0) return;
+  const targetIndex = position + delta;
+  const id = await issuedIdAtIndex(targetIndex);
+  if (!id) {
+    toast(delta < 0 ? 'Already at the first record' : 'Already at the last record');
+    return;
+  }
+  try {
+    const c = await api(`/issued-cheques/${id}`);
+    closeModal();
+    renderIssuedFormModal(mode === 'edit' ? 'edit' : 'view', c);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+async function issuedCopyRecord(mode, cheque) {
+  const form = document.getElementById('form-issued-record');
+  const data = form
+    ? Object.fromEntries(new FormData(form).entries())
+    : {
+        companyBankAccountId: cheque.companyBankAccountId, fiscalYearId: cheque.fiscalYearId,
+        chqNo: cheque.chqNo, chqDate: fmtDateInput(cheque.chqDate), pvNo: cheque.pvNo, amount: cheque.amount,
+        payeeId: cheque.payeeId, payeeName: cheque.payeeName, payeeType: cheque.payeeType,
+        payeeCategory: cheque.payeeCategory, transferToAccountId: cheque.transferToAccountId,
+        issuedById: cheque.issuedById, authorityId: cheque.authorityId, purpose: cheque.purpose,
+      };
+  const ok = await copyRecordToClipboard('issuedCheque', data);
+  toast(ok ? 'Cheque details copied' : 'Could not access the clipboard — check browser permissions', ok ? 'success' : 'error');
+}
+
+async function issuedPasteRecord() {
+  const form = document.getElementById('form-issued-record');
+  if (!form) return;
+  const data = await readRecordFromClipboard('issuedCheque');
+  if (!data) {
+    toast('Clipboard doesn\'t contain a copied issued cheque', 'error');
+    return;
+  }
+  // If the copied record's transfer/payee shape differs from the form's
+  // current toggle state, flip the toggle first so the right fields are
+  // visible/required before we fill them in.
+  const toggle = document.getElementById('is-transfer-toggle');
+  if (toggle) {
+    const shouldBeTransfer = !!data.transferToAccountId;
+    if (toggle.checked !== shouldBeTransfer) {
+      toggle.checked = shouldBeTransfer;
+      toggle.dispatchEvent(new Event('change'));
+    }
+  }
+  Object.entries(data).forEach(([key, value]) => {
+    if (value == null) return;
+    const field = form.querySelector(`[name="${key}"]`);
+    if (!field) return;
+    field.value = value;
+    if (field.tagName === 'SELECT') syncEditableSelect(field);
+    if (field.type === 'date') syncBsDatePicker(field);
+  });
+  toast('Cheque details pasted — review before saving', 'success');
+}
+
+async function issuedSubmitForm(e, isEdit, cheque, isTransfer, stripInactiveSide) {
+  e.preventDefault();
+  const form = e.target;
+  clearFormError(form);
+  let data = Object.fromEntries(new FormData(form).entries());
+  data = stripInactiveSide(data);
+  if (isEdit && !data.payeeCategory) delete data.payeeCategory;
+
+  if (isEdit) {
+    const riskyChanged = data.chqDate !== fmtDateInput(cheque.chqDate)
+      || data.chqNo !== cheque.chqNo
+      || data.companyBankAccountId !== cheque.companyBankAccountId
+      || (!isTransfer && data.payeeType !== cheque.payeeType);
+    if (riskyChanged) {
+      const ok = await openConfirmModal(
+        'Change risky fields?',
+        'You\'re changing the cheque date, cheque no, our account, or payee type. These affect the uniqueness check and the lifecycle day-count for this cheque. Continue?',
+        { confirmLabel: 'Save changes', danger: false },
+      );
+      if (!ok) return;
+    }
+    try {
+      const updated = await api(`/issued-cheques/${cheque.id}`, { method: 'PATCH', body: JSON.stringify(data) });
+      toast('Issued cheque updated', 'success');
+      closeModal();
+      renderIssuedFormModal('view', updated);
+      loadIssued();
+      loadDashboard();
+    } catch (err) {
+      formError(form, err.message);
+    }
+  } else {
+    try {
+      const created = await api('/issued-cheques', { method: 'POST', body: JSON.stringify(data) });
+      toast('Issued cheque recorded', 'success');
+      closeModal();
+      renderIssuedFormModal('view', created);
+      loadIssued();
+      loadDashboard();
+    } catch (err) {
+      formError(form, err.message);
+    }
   }
 }
 

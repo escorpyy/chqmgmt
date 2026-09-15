@@ -8,6 +8,7 @@ import { RECEIVED_STATUSES, FOLLOWUP_RESPONSES, RETURN_REASONS, PAYMENT_METHODS,
 import { loadDashboard } from './dashboard.js';
 import { syncEditableSelect } from './combobox.js';
 import { syncBsDatePicker } from './bsDatePicker.js';
+import { toolbarHtml, wireToolbar, setToolbarState, copyRecordToClipboard, readRecordFromClipboard } from './formToolbar.js';
 
 // ============================================================================
 // RECEIVED CHEQUES
@@ -20,6 +21,19 @@ const DEFAULT_RECEIVED_SORT = [{ field: 'chqDate', dir: 'desc' }];
 // column appends a tie-breaker level; clicking one already in the stack
 // just toggles its direction in place. Only "Clear filters" resets it.
 let receivedSort = DEFAULT_RECEIVED_SORT.map((s) => ({ ...s }));
+
+// ----------------------------------------------------------------------------
+// Record-navigator cache — backs the Prev/Next arrows in the cheque form
+// modal (see renderReceivedFormModal). Keyed off the *filter* portion of the
+// query (everything but page/pageSize): as long as that string is unchanged,
+// pages fetched while paging through the table, or while stepping through
+// records in the form, all land in the same map and a given cheque's index
+// is stable. If the filters or sort change, the cache is thrown away rather
+// than risk showing a stale prev/next order.
+// ----------------------------------------------------------------------------
+let receivedNavParams = null; // last filterParams.toString() the cache was built from
+let receivedNavTotal = 0;
+let receivedNavPages = new Map(); // page number (1-based) -> array of cheque ids, in list order
 
 // Column definitions for the sortable headers — label plus the backend
 // sort field (see the allowedFields list in routes/cheques.js; relation
@@ -64,8 +78,11 @@ function populateFyFilter() {
   fyFilterPopulated = true;
 }
 
-export async function loadReceived(page = receivedPage) {
-  populateFyFilter();
+// Everything that defines "which cheques, in what order" — i.e. the query
+// minus page/pageSize. Shared by loadReceived (the table) and the nav-cache
+// fetchers below (the form modal's Prev/Next), so both always agree on the
+// same list.
+function buildReceivedFilterParams() {
   const search = document.getElementById('received-search').value.trim();
   const status = document.getElementById('received-status-filter').value;
   const fiscalYearId = document.getElementById('received-fy-filter').value;
@@ -82,16 +99,69 @@ export async function loadReceived(page = receivedPage) {
   if (amountMin !== '') params.set('amountMin', amountMin);
   if (amountMax !== '') params.set('amountMax', amountMax);
   params.set('sort', receivedSort.map((s) => `${s.field}:${s.dir}`).join(','));
+  return params;
+}
+
+export async function loadReceived(page = receivedPage) {
+  populateFyFilter();
+  const filterParams = buildReceivedFilterParams();
+  const filterKey = filterParams.toString();
+  const params = new URLSearchParams(filterParams);
   params.set('page', page);
   params.set('pageSize', PAGE_SIZE);
 
   try {
     const { cheques, total } = await api(`/cheques?${params.toString()}`);
     receivedPage = page;
+    // The filters/sort changed since the cache was built — start over so
+    // Prev/Next in the form modal can't mix indices from two different lists.
+    if (filterKey !== receivedNavParams) {
+      receivedNavParams = filterKey;
+      receivedNavPages = new Map();
+    }
+    receivedNavTotal = total;
+    receivedNavPages.set(page, cheques.map((c) => c.id));
     renderReceivedTable(cheques, total, page);
   } catch (err) {
     toast(err.message, 'error');
   }
+}
+
+// Fetches (and caches) the page of the current filtered/sorted list holding
+// index `page`, reusing the table's own cache when it already has it.
+async function fetchReceivedNavPage(page) {
+  if (receivedNavPages.has(page)) return receivedNavPages.get(page);
+  const params = new URLSearchParams(receivedNavParams || buildReceivedFilterParams());
+  params.set('page', page);
+  params.set('pageSize', PAGE_SIZE);
+  const { cheques, total } = await api(`/cheques?${params.toString()}`);
+  receivedNavTotal = total;
+  const ids = cheques.map((c) => c.id);
+  receivedNavPages.set(page, ids);
+  return ids;
+}
+
+// 0-based position of `id` within the currently cached pages of the
+// filtered/sorted list, or -1 if it isn't in a page we've fetched yet (the
+// common case is that it IS, since a record's index is only ever looked up
+// right after landing on it from the table or from another nav step).
+function receivedIndexOf(id) {
+  for (const [page, ids] of receivedNavPages) {
+    const offset = ids.indexOf(id);
+    if (offset !== -1) return (page - 1) * PAGE_SIZE + offset;
+  }
+  return -1;
+}
+
+// The id at 0-based `index` in the full filtered/sorted list, fetching
+// whichever page holds it if it isn't cached yet. Returns null if the index
+// is out of range.
+async function receivedIdAtIndex(index) {
+  if (index < 0 || index >= receivedNavTotal) return null;
+  const page = Math.floor(index / PAGE_SIZE) + 1;
+  const offset = index % PAGE_SIZE;
+  const ids = await fetchReceivedNavPage(page);
+  return ids[offset] ?? null;
 }
 
 function renderReceivedTable(cheques, total, page) {
@@ -210,92 +280,65 @@ document.getElementById('btn-received-clear-filters').addEventListener('click', 
   loadReceived(1);
 });
 
-document.getElementById('btn-new-cheque').addEventListener('click', () => openNewChequeModal());
+document.getElementById('btn-new-cheque').addEventListener('click', () => renderReceivedFormModal('new', null));
 
-function openNewChequeModal() {
-  const body = `
-    <form id="form-new-cheque">
-      <div class="form-error"></div>
-      <div class="form-grid">
-        <div class="field">
-          <label>Fiscal year *</label>
-          <select name="fiscalYearId" required>${selectOptions(state.fiscalYears, 'id', (f) => f.year, 'Select fiscal year…')}</select>
-        </div>
-        <div class="field">
-          <label>Receipt no.</label>
-          <input name="receiptNo" type="text" placeholder="UR-001">
-        </div>
-        <div class="field">
-          <label>Ref no</label>
-          <input name="refNo" type="text" placeholder="URT-001/01">
-        </div>
-        <div class="field">
-          <label>Cheque no *</label>
-          <input name="chqNo" type="text" required>
-        </div>
-        <div class="field span-2">
-          <label>Issuer (party) *</label>
-          <select name="issuerId" required>${selectOptions(state.parties.filter((p) => p.isCustomer), 'id', (p) => `${p.name} (${humanize(p.type)})`, 'Select issuer…')}</select>
-        </div>
-        <div class="field">
-          <label>Payee name on cheque *</label>
-          <input name="issuedOn" type="text" required>
-        </div>
-        <div class="field">
-          <label>Payee type *</label>
-          <select name="issuedOnType" required>${enumOptions(PARTY_TYPES)}</select>
-        </div>
-        <div class="field">
-          <label>Cheque date *</label>
-          <input name="chqDate" type="date" data-bs-mode="text" required>
-        </div>
-        <div class="field">
-          <label>Amount *</label>
-          <input name="amount" type="number" step="0.01" min="0.01" required>
-        </div>
-        <div class="field">
-          <label>Drawee bank *</label>
-          <select name="bankId" required>${selectOptions(state.banks, 'id', (b) => b.name, 'Select bank…')}</select>
-        </div>
-        <div class="field">
-          <label>Account no.</label>
-          <input name="accountNo" type="text" placeholder="As written on the cheque">
-        </div>
-        <div class="field">
-          <label>Presented at bank</label>
-          <select name="presentedBankId">${selectOptions(state.banks, 'id', (b) => b.name, 'Same as drawee bank')}</select>
-        </div>
-        <div class="field">
-          <label>Handled by staff</label>
-          <select name="staffId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
-        </div>
-      </div>
-      <div class="form-actions">
-        <button type="button" class="btn btn-ghost" id="cancel-new-cheque">Cancel</button>
-        <button type="submit" class="btn btn-primary">Save cheque</button>
-      </div>
-    </form>`;
-
-  openModal('New received cheque', body, {
-    onMount: () => {
-      const form = document.getElementById('form-new-cheque');
-      document.getElementById('cancel-new-cheque').addEventListener('click', closeModal);
-      form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        clearFormError(form);
-        const data = Object.fromEntries(new FormData(form).entries());
-        try {
-          await api('/cheques', { method: 'POST', body: JSON.stringify(data) });
-          toast('Cheque recorded', 'success');
-          closeModal();
-          loadReceived();
-          loadDashboard();
-        } catch (err) {
-          formError(form, err.message);
-        }
-      });
-    },
-  });
+// Field markup for the "new" record — no <form> wrapper, no buttons; those
+// are added by renderReceivedFormModal around whichever field set the
+// current mode needs.
+function newChequeFieldsHtml() {
+  return `
+    <div class="field">
+      <label>Fiscal year *</label>
+      <select name="fiscalYearId" required>${selectOptions(state.fiscalYears, 'id', (f) => f.year, 'Select fiscal year…')}</select>
+    </div>
+    <div class="field">
+      <label>Receipt no.</label>
+      <input name="receiptNo" type="text" placeholder="UR-001">
+    </div>
+    <div class="field">
+      <label>Ref no</label>
+      <input name="refNo" type="text" placeholder="URT-001/01">
+    </div>
+    <div class="field">
+      <label>Cheque no *</label>
+      <input name="chqNo" type="text" required>
+    </div>
+    <div class="field span-2">
+      <label>Issuer (party) *</label>
+      <select name="issuerId" required>${selectOptions(state.parties.filter((p) => p.isCustomer), 'id', (p) => `${p.name} (${humanize(p.type)})`, 'Select issuer…')}</select>
+    </div>
+    <div class="field">
+      <label>Payee name on cheque *</label>
+      <input name="issuedOn" type="text" required>
+    </div>
+    <div class="field">
+      <label>Payee type *</label>
+      <select name="issuedOnType" required>${enumOptions(PARTY_TYPES)}</select>
+    </div>
+    <div class="field">
+      <label>Cheque date *</label>
+      <input name="chqDate" type="date" data-bs-mode="text" required>
+    </div>
+    <div class="field">
+      <label>Amount *</label>
+      <input name="amount" type="number" step="0.01" min="0.01" required>
+    </div>
+    <div class="field">
+      <label>Drawee bank *</label>
+      <select name="bankId" required>${selectOptions(state.banks, 'id', (b) => b.name, 'Select bank…')}</select>
+    </div>
+    <div class="field">
+      <label>Account no.</label>
+      <input name="accountNo" type="text" placeholder="As written on the cheque">
+    </div>
+    <div class="field">
+      <label>Presented at bank</label>
+      <select name="presentedBankId">${selectOptions(state.banks, 'id', (b) => b.name, 'Same as drawee bank')}</select>
+    </div>
+    <div class="field">
+      <label>Handled by staff</label>
+      <select name="staffId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
+    </div>`;
 }
 
 export async function openChequeDetail(id) {
@@ -441,133 +484,276 @@ function wireChequeActions(c) {
       if (action === 'checklog') openChequeCheckLogModal(c);
       if (action === 'resolve-checklog') openChequeResolveCheckLogModal(c, btn.dataset.logId);
       if (action === 'replace') openChequeReplaceModal(c);
-      if (action === 'edit') openChequeEditModal(c);
-      if (action === 'delete') deleteCheque(c);
+      // Both land in the same navigable form — Edit opens it ready to type
+      // into, Delete opens it read-only with the Delete button one click
+      // away, so either way you see the full record before anything changes.
+      if (action === 'edit') { closeDrawer(); renderReceivedFormModal('edit', c); }
+      if (action === 'delete') { closeDrawer(); renderReceivedFormModal('view', c); }
     });
   });
 }
 
-function openChequeEditModal(c) {
-  const body = `
-    <form id="form-edit-cheque">
-      <div class="form-error"></div>
-      <div class="form-grid">
-        <div class="field">
-          <label>Fiscal year *</label>
-          <select name="fiscalYearId" required>${selectOptions(state.fiscalYears, 'id', (f) => f.year, 'Select fiscal year…')}</select>
-        </div>
-        <div class="field">
-          <label>Receipt no.</label>
-          <input name="receiptNo" type="text" value="${escapeHtml(c.receiptNo || '')}">
-        </div>
-        <div class="field">
-          <label>Ref no</label>
-          <input name="refNo" type="text" value="${escapeHtml(c.refNo || '')}">
-        </div>
-        <div class="field">
-          <label>Amount *</label>
-          <input name="amount" type="number" step="0.01" min="0.01" required value="${escapeHtml(c.amount)}">
-        </div>
-        <div class="field">
-          <label>Account no.</label>
-          <input name="accountNo" type="text" placeholder="As written on the cheque" value="${escapeHtml(c.accountNo || '')}">
-        </div>
-        <div class="field">
-          <label>Presented at bank</label>
-          <select name="presentedBankId">${selectOptions(state.banks, 'id', (b) => b.name, 'Same as drawee bank')}</select>
-        </div>
-        <div class="field">
-          <label>Handled by staff</label>
-          <select name="staffId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
-        </div>
-      </div>
+// Field markup for editing an existing record's freely-editable fields.
+function editChequeFieldsMain(c) {
+  return `
+    <div class="field">
+      <label>Fiscal year *</label>
+      <select name="fiscalYearId" required>${selectOptions(state.fiscalYears, 'id', (f) => f.year, 'Select fiscal year…')}</select>
+    </div>
+    <div class="field">
+      <label>Receipt no.</label>
+      <input name="receiptNo" type="text" value="${escapeHtml(c.receiptNo || '')}">
+    </div>
+    <div class="field">
+      <label>Ref no</label>
+      <input name="refNo" type="text" value="${escapeHtml(c.refNo || '')}">
+    </div>
+    <div class="field">
+      <label>Amount *</label>
+      <input name="amount" type="number" step="0.01" min="0.01" required value="${escapeHtml(c.amount)}">
+    </div>
+    <div class="field">
+      <label>Account no.</label>
+      <input name="accountNo" type="text" placeholder="As written on the cheque" value="${escapeHtml(c.accountNo || '')}">
+    </div>
+    <div class="field">
+      <label>Presented at bank</label>
+      <select name="presentedBankId">${selectOptions(state.banks, 'id', (b) => b.name, 'Same as drawee bank')}</select>
+    </div>
+    <div class="field">
+      <label>Handled by staff</label>
+      <select name="staffId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
+    </div>`;
+}
 
-      <div class="section-title" style="margin-top:1rem">Risky fields</div>
-      <p class="hint" style="margin-top:0">These affect the bank/cheque-no uniqueness check and the lifecycle day-count. You'll be asked to confirm if you change any of them.</p>
-      <div class="form-grid">
-        <div class="field">
-          <label>Cheque date *</label>
-          <input name="chqDate" type="date" data-bs-mode="text" required value="${fmtDateInput(c.chqDate)}">
-        </div>
-        <div class="field">
-          <label>Cheque no *</label>
-          <input name="chqNo" type="text" required value="${escapeHtml(c.chqNo)}">
-        </div>
-        <div class="field">
-          <label>Drawee bank *</label>
-          <select name="bankId" required>${selectOptions(state.banks, 'id', (b) => b.name, 'Select bank…')}</select>
-        </div>
-        <div class="field">
-          <label>Payee type *</label>
-          <select name="issuedOnType" required>${enumOptions(PARTY_TYPES)}</select>
-        </div>
-      </div>
+// "Risky" fields — these feed the bank/cheque-no uniqueness check and the
+// day-count math, so changing them prompts a confirm (see receivedSubmitForm).
+function editChequeFieldsRisky(c) {
+  return `
+    <div class="field">
+      <label>Cheque date *</label>
+      <input name="chqDate" type="date" data-bs-mode="text" required value="${fmtDateInput(c.chqDate)}">
+    </div>
+    <div class="field">
+      <label>Cheque no *</label>
+      <input name="chqNo" type="text" required value="${escapeHtml(c.chqNo)}">
+    </div>
+    <div class="field">
+      <label>Drawee bank *</label>
+      <select name="bankId" required>${selectOptions(state.banks, 'id', (b) => b.name, 'Select bank…')}</select>
+    </div>
+    <div class="field">
+      <label>Payee type *</label>
+      <select name="issuedOnType" required>${enumOptions(PARTY_TYPES)}</select>
+    </div>`;
+}
 
-      <div class="form-actions">
-        <button type="button" class="btn btn-ghost" id="cancel-edit-cheque">Cancel</button>
-        <button type="submit" class="btn btn-primary">Save changes</button>
-      </div>
-    </form>`;
-  openModal(`Edit cheque — ${escapeHtml(c.chqNo)}`, body, {
+// Read-only summary shown in 'view' mode — same fields as the edit form,
+// plus the issuer/payee-on-cheque info that isn't editable at all (the API
+// has never accepted changing those; see routes/cheques.js PATCH).
+function receivedViewInfoHtml(c) {
+  return `
+    <dl class="detail-grid" style="margin-top:0.2rem">
+      <div class="detail-field"><dt>Fiscal year</dt><dd>${escapeHtml(c.fiscalYear?.year || '—')}</dd></div>
+      <div class="detail-field"><dt>Receipt no.</dt><dd>${escapeHtml(c.receiptNo || '—')}</dd></div>
+      <div class="detail-field"><dt>Ref no</dt><dd>${escapeHtml(c.refNo || '—')}</dd></div>
+      <div class="detail-field"><dt>Amount</dt><dd>Rs ${fmtMoney(c.amount)}</dd></div>
+      <div class="detail-field"><dt>Account no.</dt><dd>${escapeHtml(c.accountNo || '—')}</dd></div>
+      <div class="detail-field"><dt>Presented bank</dt><dd>${escapeHtml(c.presentedBank?.name || '—')}</dd></div>
+      <div class="detail-field"><dt>Handled by</dt><dd>${escapeHtml(c.staff?.name || '—')}</dd></div>
+      <div class="detail-field"><dt>Cheque date</dt><dd>${fmtDate(c.chqDate)}</dd></div>
+      <div class="detail-field"><dt>Cheque no</dt><dd class="num">${escapeHtml(c.chqNo)}</dd></div>
+      <div class="detail-field"><dt>Drawee bank</dt><dd>${escapeHtml(c.bank?.name || '—')}</dd></div>
+      <div class="detail-field"><dt>Payee type</dt><dd>${humanize(c.issuedOnType)}</dd></div>
+      <div class="detail-field"><dt>Issuer / party</dt><dd>${escapeHtml(c.issuer?.name || '—')}</dd></div>
+      <div class="detail-field"><dt>Payee on cheque</dt><dd>${escapeHtml(c.issuedOn || '—')}</dd></div>
+    </dl>`;
+}
+
+// ----------------------------------------------------------------------------
+// Unified New / View / Edit form modal — replaces the old separate
+// "New received cheque" modal and "Edit cheque" modal. One modal, three
+// modes, plus the toolbar (New/Edit/Delete, Prev/Next, Copy/Paste) so you
+// can walk the whole filtered list without closing and reopening anything.
+// ----------------------------------------------------------------------------
+function renderReceivedFormModal(mode, cheque) {
+  const isNew = mode === 'new';
+  const isEdit = mode === 'edit';
+  const title = isNew ? 'New received cheque' : `Cheque ${escapeHtml(cheque.chqNo)}`;
+  const position = isNew ? null : receivedIndexOf(cheque.id);
+
+  let bodyInner;
+  if (isNew) {
+    bodyInner = `
+      <form id="form-received-record">
+        <div class="form-error"></div>
+        <div class="form-grid">${newChequeFieldsHtml()}</div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Save cheque</button>
+        </div>
+      </form>`;
+  } else if (isEdit) {
+    bodyInner = `
+      <form id="form-received-record">
+        <div class="form-error"></div>
+        <div class="form-grid">${editChequeFieldsMain(cheque)}</div>
+        <div class="section-title" style="margin-top:1rem">Risky fields</div>
+        <p class="hint" style="margin-top:0">These affect the bank/cheque-no uniqueness check and the lifecycle day-count. You'll be asked to confirm if you change any of them.</p>
+        <div class="form-grid">${editChequeFieldsRisky(cheque)}</div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Save changes</button>
+        </div>
+      </form>`;
+  } else {
+    bodyInner = receivedViewInfoHtml(cheque);
+  }
+
+  openModal(title, `${toolbarHtml()}${bodyInner}`, {
     onMount: () => {
-      const form = document.getElementById('form-edit-cheque');
-      form.querySelector('[name="fiscalYearId"]').value = c.fiscalYearId || '';
-      syncEditableSelect(form.querySelector('[name="fiscalYearId"]'));
-      form.querySelector('[name="presentedBankId"]').value = c.presentedBankId || '';
-      syncEditableSelect(form.querySelector('[name="presentedBankId"]'));
-      form.querySelector('[name="staffId"]').value = c.staffId || '';
-      syncEditableSelect(form.querySelector('[name="staffId"]'));
-      form.querySelector('[name="bankId"]').value = c.bankId;
-      syncEditableSelect(form.querySelector('[name="bankId"]'));
-      form.querySelector('[name="issuedOnType"]').value = c.issuedOnType;
-      document.getElementById('cancel-edit-cheque').addEventListener('click', closeModal);
-      form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        clearFormError(form);
-        const data = Object.fromEntries(new FormData(form).entries());
-
-        const riskyChanged = data.chqDate !== fmtDateInput(c.chqDate)
-          || data.chqNo !== c.chqNo
-          || data.bankId !== c.bankId
-          || data.issuedOnType !== c.issuedOnType;
-        if (riskyChanged) {
-          const ok = await openConfirmModal(
-            'Change risky fields?',
-            'You\'re changing the cheque date, cheque no, drawee bank, or payee type. These affect the uniqueness check and the lifecycle day-count for this cheque. Continue?',
-            { confirmLabel: 'Save changes', danger: false },
-          );
-          if (!ok) return;
-        }
-
-        try {
-          await api(`/cheques/${c.id}`, { method: 'PATCH', body: JSON.stringify(data) });
-          toast('Cheque updated', 'success');
-          closeModal();
-          openChequeDetail(c.id);
-          loadReceived();
-          loadDashboard();
-        } catch (err) {
-          formError(form, err.message);
-        }
+      const root = document.getElementById('modal-content');
+      setToolbarState(root, { mode, position, total: receivedNavTotal });
+      wireToolbar(root, {
+        new: () => { closeModal(); renderReceivedFormModal('new', null); },
+        edit: () => { if (mode === 'view') { closeModal(); renderReceivedFormModal('edit', cheque); } },
+        delete: () => { if (!isNew) receivedDeleteFromForm(cheque); },
+        prev: () => receivedNavigate(mode, position, -1),
+        next: () => receivedNavigate(mode, position, 1),
+        copy: () => receivedCopyRecord(mode, cheque),
+        paste: () => receivedPasteRecord(),
       });
+
+      if (isNew || isEdit) {
+        const form = document.getElementById('form-received-record');
+        if (isEdit) {
+          form.querySelector('[name="fiscalYearId"]').value = cheque.fiscalYearId || '';
+          syncEditableSelect(form.querySelector('[name="fiscalYearId"]'));
+          form.querySelector('[name="presentedBankId"]').value = cheque.presentedBankId || '';
+          syncEditableSelect(form.querySelector('[name="presentedBankId"]'));
+          form.querySelector('[name="staffId"]').value = cheque.staffId || '';
+          syncEditableSelect(form.querySelector('[name="staffId"]'));
+          form.querySelector('[name="bankId"]').value = cheque.bankId;
+          syncEditableSelect(form.querySelector('[name="bankId"]'));
+          form.querySelector('[name="issuedOnType"]').value = cheque.issuedOnType;
+        }
+        form.addEventListener('submit', (e) => receivedSubmitForm(e, isEdit, cheque));
+      }
     },
   });
 }
 
-async function deleteCheque(c) {
+async function receivedDeleteFromForm(c) {
   const ok = await openConfirmModal(
     'Delete cheque?',
     `This removes cheque ${escapeHtml(c.chqNo)} from active lists and can be restored from Trash. Its history is kept, not erased.`,
   );
-  if (!ok) return;
+  if (!ok) return; // openConfirmModal's own close already restored this form as the user left it
   try {
     await api(`/cheques/${c.id}`, { method: 'DELETE' });
-    toast('Cheque deleted', 'success');
-    closeDrawer();
-    loadReceived();
-    loadDashboard();
   } catch (err) {
     toast(err.message, 'error');
+    return;
+  }
+  toast('Cheque deleted', 'success');
+  // Deleting shifts every later index by one — rather than patch the cache
+  // up, just drop it; the next Prev/Next or row click rebuilds it.
+  receivedNavParams = null;
+  receivedNavPages = new Map();
+  receivedNavTotal = 0;
+  closeModal(); // pops the stashed form from the confirm dialog, then closes it (see formToolbar.js delete flow notes)
+  loadReceived();
+  loadDashboard();
+}
+
+async function receivedNavigate(mode, position, delta) {
+  if (mode === 'new' || position == null || position < 0) return;
+  const targetIndex = position + delta;
+  const id = await receivedIdAtIndex(targetIndex);
+  if (!id) {
+    toast(delta < 0 ? 'Already at the first record' : 'Already at the last record');
+    return;
+  }
+  try {
+    const c = await api(`/cheques/${id}`);
+    closeModal();
+    renderReceivedFormModal(mode === 'edit' ? 'edit' : 'view', c);
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+async function receivedCopyRecord(mode, cheque) {
+  const form = document.getElementById('form-received-record');
+  const data = form
+    ? Object.fromEntries(new FormData(form).entries())
+    : {
+        fiscalYearId: cheque.fiscalYearId, receiptNo: cheque.receiptNo, refNo: cheque.refNo,
+        chqNo: cheque.chqNo, issuerId: cheque.issuerId, issuedOn: cheque.issuedOn, issuedOnType: cheque.issuedOnType,
+        chqDate: fmtDateInput(cheque.chqDate), amount: cheque.amount, bankId: cheque.bankId,
+        accountNo: cheque.accountNo, presentedBankId: cheque.presentedBankId, staffId: cheque.staffId,
+      };
+  const ok = await copyRecordToClipboard('receivedCheque', data);
+  toast(ok ? 'Cheque details copied' : 'Could not access the clipboard — check browser permissions', ok ? 'success' : 'error');
+}
+
+async function receivedPasteRecord() {
+  const form = document.getElementById('form-received-record');
+  if (!form) return; // Paste is disabled in view mode — nothing to fill
+  const data = await readRecordFromClipboard('receivedCheque');
+  if (!data) {
+    toast('Clipboard doesn\'t contain a copied received cheque', 'error');
+    return;
+  }
+  Object.entries(data).forEach(([key, value]) => {
+    if (value == null) return;
+    const field = form.querySelector(`[name="${key}"]`);
+    if (!field) return;
+    field.value = value;
+    if (field.tagName === 'SELECT') syncEditableSelect(field);
+    if (field.type === 'date') syncBsDatePicker(field);
+  });
+  toast('Cheque details pasted — review before saving', 'success');
+}
+
+async function receivedSubmitForm(e, isEdit, cheque) {
+  e.preventDefault();
+  const form = e.target;
+  clearFormError(form);
+  const data = Object.fromEntries(new FormData(form).entries());
+
+  if (isEdit) {
+    const riskyChanged = data.chqDate !== fmtDateInput(cheque.chqDate)
+      || data.chqNo !== cheque.chqNo
+      || data.bankId !== cheque.bankId
+      || data.issuedOnType !== cheque.issuedOnType;
+    if (riskyChanged) {
+      const ok = await openConfirmModal(
+        'Change risky fields?',
+        'You\'re changing the cheque date, cheque no, drawee bank, or payee type. These affect the uniqueness check and the lifecycle day-count for this cheque. Continue?',
+        { confirmLabel: 'Save changes', danger: false },
+      );
+      if (!ok) return;
+    }
+    try {
+      const updated = await api(`/cheques/${cheque.id}`, { method: 'PATCH', body: JSON.stringify(data) });
+      toast('Cheque updated', 'success');
+      closeModal();
+      renderReceivedFormModal('view', updated);
+      loadReceived();
+      loadDashboard();
+    } catch (err) {
+      formError(form, err.message);
+    }
+  } else {
+    try {
+      const created = await api('/cheques', { method: 'POST', body: JSON.stringify(data) });
+      toast('Cheque recorded', 'success');
+      closeModal();
+      renderReceivedFormModal('view', created);
+      loadReceived();
+      loadDashboard();
+    } catch (err) {
+      formError(form, err.message);
+    }
   }
 }
 

@@ -518,14 +518,14 @@ table.ledger.ledger-centered {
 }
 table.ledger.ledger-centered th,
 table.ledger.ledger-centered td {
-  text-align: center;
+  text-align: left;
   border: 1px solid var(--line);
 }
 table.ledger.ledger-centered thead th {
   border-bottom: 1px solid var(--ink);
 }
 table.ledger.ledger-centered .date-stack { align-items: center; }
-table.ledger.ledger-centered .amount { text-align: center; }
+table.ledger.ledger-centered .amount { text-align: right; }
 table.ledger.ledger-centered .cell-sub {
   display: block;
   font-size: 0.74rem;
@@ -744,6 +744,28 @@ td.row-actions {
 }
 .modal-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.1rem; }
 .modal-header h2 { font-size: 1.2rem; }
+
+/* Record-form toolbar — New/Edit/Delete (left), Prev/Next (middle), Copy/
+   Paste (right) — sits at the top of the received/issued cheque form modal,
+   just under the modal header. See public/js/formToolbar.js. */
+.form-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.1rem;
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid var(--line);
+}
+.ft-group { display: flex; align-items: center; gap: 0.4rem; }
+.ft-nav { gap: 0.5rem; }
+.ft-position { font-size: 0.78rem; color: var(--ink-soft); min-width: 4.5rem; text-align: center; }
+.btn-icon { padding: 0.3rem 0.6rem; line-height: 1; font-size: 0.95rem; }
+@media (max-width: 640px) {
+  .form-toolbar { justify-content: center; }
+  .ft-left, .ft-right { flex: 1 1 auto; justify-content: center; }
+}
 .modal-close { border: none; background: none; font-size: 1.3rem; cursor: pointer; color: var(--ink-soft); }
 
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.9rem; }
