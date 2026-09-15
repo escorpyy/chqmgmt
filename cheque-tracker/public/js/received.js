@@ -338,6 +338,15 @@ function newChequeFieldsHtml() {
     <div class="field">
       <label>Handled by staff</label>
       <select name="staffId">${selectOptions(state.staff, 'id', (s) => s.name, 'Unassigned')}</select>
+    </div>
+    <div class="field">
+      <label>Status</label>
+      <select name="status">${enumOptions(RECEIVED_STATUSES, 'Pending (default)')}</select>
+    </div>
+    <div class="field">
+      <label>Status date</label>
+      <input name="statusDate" type="date" data-bs-mode="text">
+      <span class="hint">Leave blank to use today. Only needed if this cheque isn't starting out Pending.</span>
     </div>`;
 }
 

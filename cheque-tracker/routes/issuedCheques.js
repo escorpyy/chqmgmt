@@ -143,6 +143,7 @@ router.post('/', asyncHandler(async (req, res) => {
     companyBankAccountId, fiscalYearId, pvNo, chqNo, chqDate,
     payeeId, payeeName, payeeType, payeeCategory, transferToAccountId,
     amount, purpose, issuedById, authorityId,
+    status, statusDate,
   } = req.body;
 
   const transfer = isTransfer(transferToAccountId);
@@ -171,6 +172,31 @@ router.post('/', asyncHandler(async (req, res) => {
   if (!parsedChqDate) {
     return res.status(400).json({ error: 'chqDate is not a valid date' });
   }
+
+  // status/statusDate are optional at creation — see the identical comment
+  // in routes/cheques.js POST /. Same mirroring of PATCH /:id/status's
+  // derived fields, using the issued-side enum/status set and default.
+  const statusProvided = status !== undefined && status !== '';
+  const statusDateProvided = statusDate !== undefined && statusDate !== '';
+  if (statusProvided && !isValidEnum(status, ISSUED_STATUSES)) {
+    return res.status(400).json({ error: `status must be one of: ${ISSUED_STATUSES.join(', ')}` });
+  }
+  let parsedStatusDate = new Date();
+  if (statusDateProvided) {
+    parsedStatusDate = parseDateOrNull(statusDate);
+    if (!parsedStatusDate) return res.status(400).json({ error: 'statusDate is not a valid date' });
+  }
+  const initialStatus = statusProvided ? status : 'ISSUED';
+  const statusFields = (statusProvided || statusDateProvided)
+    ? {
+        status: initialStatus,
+        statusDate: parsedStatusDate,
+        totalDays: computeTotalDays(parsedChqDate, parsedStatusDate),
+        previousStatus: initialStatus === 'ON_CHECK' ? 'ISSUED' : null,
+        ...(initialStatus === 'CLEARED' ? { clearanceMethod: 'PRESENTMENT' } : {}),
+        ...issuedStageTimestampFields(initialStatus, parsedStatusDate),
+      }
+    : {};
 
   // The account(s), fiscal year, payee, issuing staff, and authority must
   // all belong to this company.
@@ -215,6 +241,7 @@ router.post('/', asyncHandler(async (req, res) => {
       purpose,
       issuedById: issuedById || null,
       authorityId: authorityId || null,
+      ...statusFields,
     },
     include: issuedInclude,
   });

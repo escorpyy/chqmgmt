@@ -138,6 +138,7 @@ router.post('/', asyncHandler(async (req, res) => {
   const {
     fiscalYearId, receiptNo, refNo, issuerId, issuedOn, issuedOnType, payableToCompany,
     chqDate, chqNo, bankId, presentedBankId, amount, staffId, accountNo,
+    status, statusDate,
   } = req.body;
 
   const required = { fiscalYearId, issuerId, issuedOn, issuedOnType, chqDate, chqNo, bankId, amount };
@@ -155,6 +156,38 @@ router.post('/', asyncHandler(async (req, res) => {
   if (!parsedChqDate) {
     return res.status(400).json({ error: 'chqDate is not a valid date' });
   }
+
+  // status/statusDate are optional at creation — most cheques start out
+  // PENDING as of right now (the schema defaults), but the form also lets
+  // staff record a cheque that's already further along (e.g. backdated
+  // entry of historical data). When provided, mirror the same derived
+  // fields that PATCH /:id/status would produce, so a cheque created
+  // straight into e.g. CLEARED isn't left with a stale totalDays/stage
+  // timestamp.
+  const statusProvided = status !== undefined && status !== '';
+  const statusDateProvided = statusDate !== undefined && statusDate !== '';
+  if (statusProvided && !isValidEnum(status, CHEQUE_STATUSES)) {
+    return res.status(400).json({ error: `status must be one of: ${CHEQUE_STATUSES.join(', ')}` });
+  }
+  let parsedStatusDate = new Date();
+  if (statusDateProvided) {
+    parsedStatusDate = parseDateOrNull(statusDate);
+    if (!parsedStatusDate) return res.status(400).json({ error: 'statusDate is not a valid date' });
+  }
+  const initialStatus = statusProvided ? status : 'PENDING';
+  const statusFields = (statusProvided || statusDateProvided)
+    ? {
+        status: initialStatus,
+        statusDate: parsedStatusDate,
+        totalDays: computeTotalDays(parsedChqDate, parsedStatusDate),
+        // No prior state exists yet at creation — ON_CHECK's "what it was
+        // right before" falls back to the PENDING it would otherwise have
+        // started as (mirrors receivedStageTimestampFields's intent).
+        previousStatus: initialStatus === 'ON_CHECK' ? 'PENDING' : null,
+        ...(initialStatus === 'CLEARED' ? { clearanceMethod: 'PRESENTMENT' } : {}),
+        ...receivedStageTimestampFields(initialStatus, parsedStatusDate),
+      }
+    : {};
 
   // Referenced fiscal year / issuer / bank(s) / staff must all belong to
   // the same company as the cheque itself — otherwise data from one
@@ -193,6 +226,7 @@ router.post('/', asyncHandler(async (req, res) => {
       amount,
       staffId: staffId || null,
       accountNo: accountNo || null,
+      ...statusFields,
     },
     include: chequeInclude,
   });

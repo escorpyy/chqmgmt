@@ -328,6 +328,15 @@ function newIssuedFieldsHtml() {
     <div class="field span-2">
       <label>Purpose</label>
       <textarea name="purpose" placeholder="e.g. against bill no. 4521"></textarea>
+    </div>
+    <div class="field">
+      <label>Status</label>
+      <select name="status">${enumOptions(ISSUED_STATUSES, 'Issued (default)')}</select>
+    </div>
+    <div class="field">
+      <label>Status date</label>
+      <input name="statusDate" type="date" data-bs-mode="text">
+      <span class="hint">Leave blank to use today. Only needed if this cheque isn't starting out Issued.</span>
     </div>`;
 }
 
