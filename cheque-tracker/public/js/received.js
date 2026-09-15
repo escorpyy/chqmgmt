@@ -247,7 +247,7 @@ function openNewChequeModal() {
         </div>
         <div class="field">
           <label>Cheque date *</label>
-          <input name="chqDate" type="date" required>
+          <input name="chqDate" type="date" data-bs-mode="text" required>
         </div>
         <div class="field">
           <label>Amount *</label>
@@ -487,7 +487,7 @@ function openChequeEditModal(c) {
       <div class="form-grid">
         <div class="field">
           <label>Cheque date *</label>
-          <input name="chqDate" type="date" required value="${fmtDateInput(c.chqDate)}">
+          <input name="chqDate" type="date" data-bs-mode="text" required value="${fmtDateInput(c.chqDate)}">
         </div>
         <div class="field">
           <label>Cheque no *</label>
@@ -582,7 +582,7 @@ function openChequeStatusModal(c) {
         </div>
         <div class="field span-2">
           <label>Status date *</label>
-          <input name="statusDate" type="date" id="status-date-input" required value="${fmtDateInput(c.statusDate)}" min="${fmtDateInput(c.chqDate)}">
+          <input name="statusDate" type="date" data-bs-mode="text" id="status-date-input" required value="${fmtDateInput(c.statusDate)}" min="${fmtDateInput(c.chqDate)}">
           <span class="hint">Total lifecycle (status date − cheque date) is recalculated from this.</span>
         </div>
         <div class="field span-2" id="clearance-field" style="display:none">
@@ -647,11 +647,11 @@ function openChequeFollowUpModal(c) {
         </div>
         <div class="field">
           <label>Follow-up date</label>
-          <input name="followUpDate" type="date" value="${fmtDateInput(new Date())}">
+          <input name="followUpDate" type="date" data-bs-mode="text" value="${fmtDateInput(new Date())}">
         </div>
         <div class="field">
           <label>Next action date</label>
-          <input name="nextActionDate" type="date">
+          <input name="nextActionDate" type="date" data-bs-mode="text">
         </div>
         <div class="field span-2">
           <label>Staff</label>
@@ -707,7 +707,7 @@ function openChequePaymentModal(c) {
         </div>
         <div class="field">
           <label>Payment date</label>
-          <input name="paymentDate" type="date" value="${fmtDateInput(new Date())}">
+          <input name="paymentDate" type="date" data-bs-mode="text" value="${fmtDateInput(new Date())}">
         </div>
         <div class="field">
           <label>Reference no</label>
@@ -846,7 +846,7 @@ function openChequeReplaceModal(c) {
         </div>
         <div class="field">
           <label>New cheque date *</label>
-          <input name="chqDate" type="date" required>
+          <input name="chqDate" type="date" data-bs-mode="text" required>
         </div>
         <div class="field">
           <label>Amount</label>
