@@ -18,14 +18,22 @@ async function assertValidFirmId(firmId, companyId) {
   return null;
 }
 
-// GET /api/parties?type=FIRM&search=abc&includeDeleted=false
+// GET /api/parties?type=FIRM&role=vendor&search=abc&includeDeleted=false
+// `role` filters to a party's business relationship (isCustomer/isVendor) —
+// distinct from `type`, which is legal structure (firm/individual). Omit
+// `role` to get everyone, same as before this field existed.
 router.get('/', asyncHandler(async (req, res) => {
-  const { type, search, includeDeleted } = req.query;
+  const { type, role, search, includeDeleted } = req.query;
+  if (role && !['customer', 'vendor'].includes(role)) {
+    return res.status(400).json({ error: "role must be 'customer' or 'vendor'" });
+  }
 
   const where = {
     ...companyWhere(req),
     ...(includeDeleted === 'true' ? {} : { deletedAt: null }),
     ...(type ? { type } : {}),
+    ...(role === 'customer' ? { isCustomer: true } : {}),
+    ...(role === 'vendor' ? { isVendor: true } : {}),
     ...(search ? { name: { contains: search, mode: 'insensitive' } } : {}),
   };
 
@@ -57,12 +65,15 @@ router.get('/:id', asyncHandler(async (req, res) => {
 router.post('/', asyncHandler(async (req, res) => {
   const companyId = requireSingleCompany(req, res);
   if (!companyId) return;
-  const { type, name, phone, address, panNo, firmId } = req.body;
+  const { type, name, phone, address, panNo, firmId, isCustomer, isVendor } = req.body;
   if (!type || !name) {
     return res.status(400).json({ error: 'type and name are required' });
   }
   if (!isValidEnum(type, PARTY_TYPES)) {
     return res.status(400).json({ error: `type must be one of: ${PARTY_TYPES.join(', ')}` });
+  }
+  if (!isCustomer && !isVendor) {
+    return res.status(400).json({ error: 'Party must be a customer, a vendor, or both' });
   }
   if (type === 'INDIVIDUAL' && firmId) {
     const firmError = await assertValidFirmId(firmId, companyId);
@@ -71,6 +82,8 @@ router.post('/', asyncHandler(async (req, res) => {
   const party = await prisma.party.create({
     data: {
       type, name, phone, address,
+      isCustomer: !!isCustomer,
+      isVendor: !!isVendor,
       // An individual's PAN, if any, belongs to the firm they're
       // affiliated with — never entered directly on the individual.
       panNo: type === 'FIRM' ? (panNo || null) : null,
@@ -85,7 +98,7 @@ router.post('/', asyncHandler(async (req, res) => {
 router.patch('/:id', asyncHandler(async (req, res) => {
   const existing = await prisma.party.findFirst({ where: { id: req.params.id, ...companyWhere(req) } });
   if (!existing) return res.status(404).json({ error: 'Party not found' });
-  const { name, phone, address, panNo, firmId } = req.body;
+  const { name, phone, address, panNo, firmId, isCustomer, isVendor } = req.body;
   if (firmId !== undefined && firmId) {
     if (firmId === req.params.id) {
       return res.status(400).json({ error: 'A party cannot be its own firm' });
@@ -93,12 +106,19 @@ router.patch('/:id', asyncHandler(async (req, res) => {
     const firmError = await assertValidFirmId(firmId, existing.companyId);
     if (firmError) return res.status(400).json({ error: firmError });
   }
+  const nextIsCustomer = isCustomer !== undefined ? !!isCustomer : existing.isCustomer;
+  const nextIsVendor = isVendor !== undefined ? !!isVendor : existing.isVendor;
+  if (!nextIsCustomer && !nextIsVendor) {
+    return res.status(400).json({ error: 'Party must be a customer, a vendor, or both' });
+  }
   const party = await prisma.party.update({
     where: { id: req.params.id },
     data: {
       ...(name !== undefined ? { name } : {}),
       ...(phone !== undefined ? { phone } : {}),
       ...(address !== undefined ? { address } : {}),
+      ...(isCustomer !== undefined ? { isCustomer: nextIsCustomer } : {}),
+      ...(isVendor !== undefined ? { isVendor: nextIsVendor } : {}),
       // Same rule as create: PAN only ever lives directly on a FIRM party.
       // An INDIVIDUAL's PAN comes from their affiliated firm instead — see
       // routes/parties.js's GET include and the frontend's read-only

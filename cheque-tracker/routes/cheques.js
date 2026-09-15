@@ -168,6 +168,7 @@ router.post('/', asyncHandler(async (req, res) => {
   ]);
   if (!fy) return res.status(400).json({ error: 'fiscalYearId does not belong to the selected company' });
   if (!issuer) return res.status(400).json({ error: 'issuerId does not belong to the selected company or has been deleted' });
+  if (issuer && !issuer.isCustomer) return res.status(400).json({ error: 'issuerId must reference a party marked as a customer' });
   if (!bank) return res.status(400).json({ error: 'bankId does not belong to the selected company or has been deleted' });
   if (presentedBankId && !presentedBank) return res.status(400).json({ error: 'presentedBankId does not belong to the selected company or has been deleted' });
   if (staffId && !staff) return res.status(400).json({ error: 'staffId does not belong to the selected company or has been deleted' });

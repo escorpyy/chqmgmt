@@ -460,6 +460,11 @@ main:has(#panel-issued.active) {
   white-space: nowrap;
 }
 .checkbox-field input { cursor: pointer; }
+.checkbox-group {
+  display: flex;
+  gap: 1.2rem;
+  padding: 0.5rem 0;
+}
 
 /* ==========================================================================
    Tables — open-ledger look: horizontal rules only

@@ -104,7 +104,7 @@ router.get('/', asyncHandler(async (req, res) => {
   };
   const orderBy = parseSort(sort, [
     'chqDate', 'amount', 'chqNo', 'status', 'statusDate', 'totalDays',
-    'pvNo', 'payeeName', 'companyBankAccount.bank.name',
+    'pvNo', 'payeeName', 'purpose', 'companyBankAccount.bank.name',
   ], { chqDate: 'desc' });
 
   const [cheques, total] = await Promise.all([
@@ -148,7 +148,7 @@ router.post('/', asyncHandler(async (req, res) => {
   const transfer = isTransfer(transferToAccountId);
   const required = { companyBankAccountId, fiscalYearId, chqNo, chqDate, amount };
   if (!transfer) {
-    required.payeeName = payeeName;
+    required.payeeId = payeeId;
     required.payeeType = payeeType;
   }
   const missing = Object.entries(required).filter(([, v]) => v === undefined || v === null || v === '');
@@ -186,6 +186,7 @@ router.post('/', asyncHandler(async (req, res) => {
   if (transfer && !toAccount) return res.status(400).json({ error: 'transferToAccountId does not belong to the selected company or has been deleted' });
   if (!fy) return res.status(400).json({ error: 'fiscalYearId does not belong to the selected company' });
   if (payeeId && !payee) return res.status(400).json({ error: 'payeeId does not belong to the selected company or has been deleted' });
+  if (payeeId && payee && !payee.isVendor) return res.status(400).json({ error: 'payeeId must reference a party marked as a vendor' });
   if (issuedById && !issuedBy) return res.status(400).json({ error: 'issuedById does not belong to the selected company or has been deleted' });
   if (authorityId && !authority) return res.status(400).json({ error: 'authorityId does not belong to the selected company or has been deleted' });
 
@@ -198,7 +199,12 @@ router.post('/', asyncHandler(async (req, res) => {
       chqNo,
       chqDate: parsedChqDate,
       payeeId: transfer ? null : (payeeId || null),
-      payeeName: transfer ? null : payeeName,
+      // The name actually written on the cheque can differ from the
+      // vendor's own name (e.g. paid to a specific person on their
+      // behalf) — but most of the time it's the same, so default to the
+      // vendor's name when the field is left blank rather than making
+      // staff retype it.
+      payeeName: transfer ? null : (payeeName || payee?.name || null),
       payeeType: transfer ? null : payeeType,
       payeeCategory: transfer ? null : (payeeCategory || null),
       transferToAccountId: transfer ? transferToAccountId : null,

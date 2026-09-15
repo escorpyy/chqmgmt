@@ -171,6 +171,16 @@ model Party {
   address   String?
   panNo     String?    // unique per company, see @@unique below
 
+  // A party's role(s) in the business relationship — independent of `type`
+  // (which is about legal structure: firm vs individual). Deliberately two
+  // booleans rather than a single enum with a CUSTOMER/VENDOR/BOTH value:
+  // a party that's both just has both set true, and each screen filters on
+  // its own flag rather than needing to special-case a third state. At
+  // least one must be true — enforced in the API and via a DB check
+  // constraint (see manual-migration-additions.sql #8).
+  isCustomer Boolean   @default(true)  // appears in the received-cheque issuer picker
+  isVendor   Boolean   @default(false) // appears in the issued-cheque payee picker
+
   // For an INDIVIDUAL party: the firm they're affiliated with/represent
   firmId    String?
   firm      Party?     @relation("PartyFirm", fields: [firmId], references: [id], onDelete: Restrict)
@@ -188,6 +198,8 @@ model Party {
   @@index([name])
   @@index([firmId])
   @@index([deletedAt])
+  @@index([isCustomer])
+  @@index([isVendor])
 }
 
 model Bank {

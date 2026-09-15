@@ -29,7 +29,8 @@ let issuedSort = DEFAULT_ISSUED_SORT.map((s) => ({ ...s }));
 const ISSUED_COLUMNS = [
   { label: 'Cheque no', field: 'chqNo' },
   { label: 'Cheque date', field: 'chqDate' },
-  { label: 'Payee / vendor', field: 'payeeName' },
+  { label: 'Vendor', field: 'payeeName' },
+  { label: 'Purpose', field: 'purpose' },
   { label: 'Bank name', field: 'companyBankAccount.bank.name' },
   { label: 'Amount', field: 'amount' },
   { label: 'Status', field: 'status' },
@@ -114,10 +115,16 @@ function renderIssuedTable(cheques, total, page) {
             <td>
               ${isTransfer
                 ? `<div>→ ${escapeHtml(c.transferToAccount?.accountName || '—')}<span class="muted cell-sub" style="display:inline"> (transfer)</span></div>`
-                : `<div>${escapeHtml(c.payeeName || '—')}</div>
-                   ${c.payeeType === 'INDIVIDUAL' && c.payee?.firm ? `<div class="muted cell-sub">${escapeHtml(c.payee.firm.name)}</div>` : ''}`}
-              <div class="muted cell-sub">${escapeHtml(c.pvNo || '—')}${c.purpose ? ` · ${escapeHtml(c.purpose)}` : ''}</div>
+                // c.payee is the linked vendor record (the source of truth for
+                // "who this is") — c.payeeName is just what's literally written
+                // on the cheque, so it only gets its own line when it actually
+                // differs. Legacy rows from before vendors existed may have no
+                // linked payee at all, hence the payeeName fallback for the top line.
+                : `<div>${escapeHtml(c.payee?.name || c.payeeName || '—')}</div>
+                   ${c.payee && c.payeeName && c.payeeName !== c.payee.name ? `<div class="muted cell-sub">${escapeHtml(c.payeeName)}</div>` : ''}`}
+              <div class="muted cell-sub">${escapeHtml(c.pvNo || '—')}</div>
             </td>
+            <td>${escapeHtml(c.purpose || '—')}</td>
             <td>
               <div>${escapeHtml(c.companyBankAccount?.bank?.name || '—')}</div>
               <div class="muted cell-sub">${escapeHtml(c.companyBankAccount?.accountName || '—')} · ${escapeHtml(c.companyBankAccount?.accountNumber || '—')}</div>
@@ -240,11 +247,11 @@ function openNewIssuedModal() {
         </div>
         <div id="payee-fields" class="field span-2" style="display:contents">
           <div class="field span-2">
-            <label>Payee party (optional)</label>
-            <select name="payeeId">${selectOptions(state.parties, 'id', (p) => p.name, 'Not in party list')}</select>
+            <label>Vendor *</label>
+            <select name="payeeId">${selectOptions(state.parties.filter((p) => p.isVendor), 'id', (p) => p.name, 'Select vendor…')}</select>
           </div>
           <div class="field">
-            <label>Payee name on cheque *</label>
+            <label>Payee name on cheque <span class="hint" style="font-weight:normal">(if different from vendor)</span></label>
             <input name="payeeName" type="text">
           </div>
           <div class="field">
@@ -285,7 +292,7 @@ function openNewIssuedModal() {
       const toggle = document.getElementById('is-transfer-toggle');
       const payeeFields = document.getElementById('payee-fields');
       const transferFields = document.getElementById('transfer-fields');
-      const payeeNameInput = form.querySelector('[name="payeeName"]');
+      const payeeIdSelect = form.querySelector('[name="payeeId"]');
       const payeeTypeSelect = form.querySelector('[name="payeeType"]');
       const transferToSelect = form.querySelector('[name="transferToAccountId"]');
 
@@ -293,7 +300,7 @@ function openNewIssuedModal() {
         const isTransfer = toggle.checked;
         payeeFields.style.display = isTransfer ? 'none' : 'contents';
         transferFields.style.display = isTransfer ? '' : 'none';
-        payeeNameInput.required = !isTransfer;
+        payeeIdSelect.required = !isTransfer;
         payeeTypeSelect.required = !isTransfer;
         transferToSelect.required = isTransfer;
       };
@@ -313,7 +320,7 @@ function openNewIssuedModal() {
           delete data.payeeCategory;
         } else {
           delete data.transferToAccountId;
-          if (!data.payeeId) delete data.payeeId;
+          if (!data.payeeName) delete data.payeeName;
           if (!data.payeeCategory) delete data.payeeCategory;
         }
         try {
@@ -382,7 +389,7 @@ function renderIssuedDrawer(c) {
     <div class="drawer-header">
       <div>
         <h2>Issued cheque ${escapeHtml(c.chqNo)}</h2>
-        <p class="hint" style="margin-top:0.2rem">${isTransfer ? `Transfer → ${escapeHtml(c.transferToAccount?.accountName || '—')}` : escapeHtml(c.payeeName || '—')} · ${fmtDate(c.chqDate)}</p>
+        <p class="hint" style="margin-top:0.2rem">${isTransfer ? `Transfer → ${escapeHtml(c.transferToAccount?.accountName || '—')}` : escapeHtml(c.payee?.name || c.payeeName || '—')} · ${fmtDate(c.chqDate)}</p>
       </div>
       <button class="drawer-close" id="drawer-close-btn" aria-label="Close">×</button>
     </div>
@@ -398,6 +405,8 @@ function renderIssuedDrawer(c) {
       ${isTransfer
         ? `<div class="detail-field"><dt>Transfer to</dt><dd>${escapeHtml(c.transferToAccount?.accountName || '—')} (${escapeHtml(c.transferToAccount?.bank?.name || '—')})</dd></div>`
         : `
+      <div class="detail-field"><dt>Vendor</dt><dd>${escapeHtml(c.payee?.name || '—')}</dd></div>
+      ${c.payee && c.payeeName && c.payeeName !== c.payee.name ? `<div class="detail-field"><dt>Payee name on cheque</dt><dd>${escapeHtml(c.payeeName)}</dd></div>` : ''}
       <div class="detail-field"><dt>Payee type</dt><dd>${humanize(c.payeeType)}</dd></div>
       ${c.payeeCategory ? `<div class="detail-field"><dt>Payee category</dt><dd>${humanize(c.payeeCategory)}</dd></div>` : ''}
       ${c.payeeType === 'INDIVIDUAL' && c.payee?.firm ? `<div class="detail-field"><dt>Supplier</dt><dd>${escapeHtml(c.payee.firm.name)}</dd></div>` : ''}`}

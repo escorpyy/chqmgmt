@@ -235,7 +235,7 @@ function openNewChequeModal() {
         </div>
         <div class="field span-2">
           <label>Issuer (party) *</label>
-          <select name="issuerId" required>${selectOptions(state.parties, 'id', (p) => `${p.name} (${humanize(p.type)})`, 'Select issuer…')}</select>
+          <select name="issuerId" required>${selectOptions(state.parties.filter((p) => p.isCustomer), 'id', (p) => `${p.name} (${humanize(p.type)})`, 'Select issuer…')}</select>
         </div>
         <div class="field">
           <label>Payee name on cheque *</label>

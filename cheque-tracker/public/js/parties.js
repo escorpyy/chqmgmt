@@ -13,10 +13,12 @@ import { registerMasterCreator, syncEditableSelect } from './combobox.js';
 export async function loadParties() {
   const search = document.getElementById('party-search').value;
   const type = document.getElementById('party-type-filter').value;
+  const role = document.getElementById('party-role-filter').value;
   const showDeleted = document.getElementById('party-show-deleted').checked;
   const params = new URLSearchParams();
   if (search) params.set('search', search);
   if (type) params.set('type', type);
+  if (role) params.set('role', role);
   if (showDeleted) params.set('includeDeleted', 'true');
   try {
     const parties = await api(`/parties?${params.toString()}`);
@@ -24,6 +26,12 @@ export async function loadParties() {
   } catch (err) {
     toast(err.message, 'error');
   }
+}
+
+function partyRoleLabel(party) {
+  if (party.isCustomer && party.isVendor) return 'Customer &amp; vendor';
+  if (party.isVendor) return 'Vendor';
+  return 'Customer'; // isCustomer is the only remaining true case — every party is at least one
 }
 
 function renderPartiesTable(parties) {
@@ -34,12 +42,13 @@ function renderPartiesTable(parties) {
   }
   el.innerHTML = `
     <table class="ledger">
-      <thead><tr><th>Name</th><th>Type</th><th>Phone</th><th>Firm</th><th>PAN</th><th>Cheques</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Type</th><th>Role</th><th>Phone</th><th>Firm</th><th>PAN</th><th>Cheques</th><th></th></tr></thead>
       <tbody>
         ${parties.map((p) => `
           <tr class="${p.deletedAt ? 'row-deleted' : ''}" data-id="${p.id}">
             <td>${escapeHtml(p.name)}${p.deletedAt ? '<span class="tag-deleted">Deleted</span>' : ''}</td>
             <td>${humanize(p.type)}</td>
+            <td>${partyRoleLabel(p)}</td>
             <td class="num">${escapeHtml(p.phone || '—')}</td>
             <td>${escapeHtml(p.firm?.name || '—')}</td>
             <td class="num">${escapeHtml(p.panNo || p.firm?.panNo || '—')}</td>
@@ -71,6 +80,7 @@ function renderPartiesTable(parties) {
 
 document.getElementById('party-search').addEventListener('input', debounce(loadParties, 300));
 document.getElementById('party-type-filter').addEventListener('change', loadParties);
+document.getElementById('party-role-filter').addEventListener('change', loadParties);
 document.getElementById('party-show-deleted').addEventListener('change', loadParties);
 
 function openEditPartyModal(party) {
@@ -90,6 +100,14 @@ function openEditPartyModal(party) {
         <div class="field">
           <label>Phone</label>
           <input name="phone" type="text" value="${escapeHtml(party.phone || '')}">
+        </div>
+        <div class="field span-2">
+          <label>Role *</label>
+          <div class="checkbox-group">
+            <label class="checkbox-field"><input type="checkbox" name="isCustomer" ${party.isCustomer ? 'checked' : ''}> Customer</label>
+            <label class="checkbox-field"><input type="checkbox" name="isVendor" ${party.isVendor ? 'checked' : ''}> Vendor</label>
+          </div>
+          <span class="hint" id="edit-party-role-hint"></span>
         </div>
         ${isIndividual
           ? `<div class="field">
@@ -134,6 +152,12 @@ function openEditPartyModal(party) {
         const data = Object.fromEntries(new FormData(form).entries());
         if (party.type === 'FIRM') delete data.firmId;
         if (!data.firmId) delete data.firmId;
+        data.isCustomer = form.querySelector('[name="isCustomer"]').checked;
+        data.isVendor = form.querySelector('[name="isVendor"]').checked;
+        if (!data.isCustomer && !data.isVendor) {
+          formError(form, 'Pick at least one role: customer, vendor, or both.');
+          return;
+        }
         try {
           await api(`/parties/${party.id}`, { method: 'PATCH', body: JSON.stringify(data) });
           toast('Party updated', 'success');
@@ -177,7 +201,13 @@ async function restoreParty(party) {
 
 // `type` presets & locks the Type field — used when this is opened from the
 // firmId editable dropdown, which only ever wants to create a firm.
-export function openNewPartyModal({ name = '', type = '', onCreated } = {}) {
+// `presetRole` ('customer' | 'vendor') pre-checks the matching role box —
+// used when this is opened from the issuer or payee combobox's "add new"
+// action, so a vendor typed into the payee field doesn't default to
+// Customer-only and vanish from that same dropdown once saved.
+export function openNewPartyModal({ name = '', type = '', presetRole = '', onCreated } = {}) {
+  const defaultCustomer = presetRole !== 'vendor';
+  const defaultVendor = presetRole === 'vendor';
   const body = `
     <form id="form-new-party">
       <div class="form-error"></div>
@@ -193,6 +223,13 @@ export function openNewPartyModal({ name = '', type = '', onCreated } = {}) {
         <div class="field">
           <label>Phone</label>
           <input name="phone" type="text">
+        </div>
+        <div class="field span-2">
+          <label>Role *</label>
+          <div class="checkbox-group">
+            <label class="checkbox-field"><input type="checkbox" name="isCustomer" id="new-party-is-customer" ${defaultCustomer ? 'checked' : ''}> Customer</label>
+            <label class="checkbox-field"><input type="checkbox" name="isVendor" id="new-party-is-vendor" ${defaultVendor ? 'checked' : ''}> Vendor</label>
+          </div>
         </div>
         <div class="field" id="new-party-pan-field">
           <label>PAN no.</label>
@@ -249,6 +286,12 @@ export function openNewPartyModal({ name = '', type = '', onCreated } = {}) {
         if (type) data.type = type; // disabled fields are excluded from FormData
         if (!data.firmId) delete data.firmId;
         if (data.type === 'INDIVIDUAL') delete data.panNo; // comes from the firm, not entered here
+        data.isCustomer = form.querySelector('[name="isCustomer"]').checked;
+        data.isVendor = form.querySelector('[name="isVendor"]').checked;
+        if (!data.isCustomer && !data.isVendor) {
+          formError(form, 'Pick at least one role: customer, vendor, or both.');
+          return;
+        }
         try {
           const party = await api('/parties', { method: 'POST', body: JSON.stringify(data) });
           toast('Party saved', 'success');
@@ -266,6 +309,6 @@ export function openNewPartyModal({ name = '', type = '', onCreated } = {}) {
 
 document.getElementById('btn-new-party').addEventListener('click', () => openNewPartyModal());
 
-registerMasterCreator('payeeId', (typed, onCreated) => openNewPartyModal({ name: typed, onCreated }));
-registerMasterCreator('issuerId', (typed, onCreated) => openNewPartyModal({ name: typed, onCreated }));
+registerMasterCreator('payeeId', (typed, onCreated) => openNewPartyModal({ name: typed, presetRole: 'vendor', onCreated }));
+registerMasterCreator('issuerId', (typed, onCreated) => openNewPartyModal({ name: typed, presetRole: 'customer', onCreated }));
 registerMasterCreator('firmId', (typed, onCreated) => openNewPartyModal({ name: typed, type: 'FIRM', onCreated }));

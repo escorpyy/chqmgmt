@@ -152,6 +152,13 @@ ALTER TABLE "DailyBankBalance" ADD CONSTRAINT chk_dailybankbalance_received_nonn
 
 
 -- ----------------------------------------------------------------------------
+-- 8. A party must be at least one of customer / vendor — never neither
+-- ----------------------------------------------------------------------------
+ALTER TABLE "Party" ADD CONSTRAINT chk_party_customer_or_vendor
+  CHECK ("isCustomer" OR "isVendor");
+
+
+-- ----------------------------------------------------------------------------
 -- NOT included here (needs app-level logic, not a DB rule):
 --   - referenceNo required when method IN ('IPS','CIPS','QR') but optional
 --     for CASH — this is a *conditional* requirement based on another
